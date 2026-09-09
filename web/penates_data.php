@@ -12,7 +12,7 @@ const PENATES_BIN_SELECT = 'Location_Code,Code,Description,Empty,KVT_Job_Bin';
 const PENATES_CONTENT_SELECT = 'Location_Code,Bin_Code,Item_No,Variant_Code,Unit_of_Measure_Code,Quantity_Base,Pick_Quantity_Base,CalcQtyAvailToTakeUOM';
 const PENATES_WORKORDER_SELECT = 'No,Job_No,Job_Task_No,Task_Description,Status,KVT_Document_Status,KVT_No_Material_Needed,Start_Date';
 const PENATES_LINE_SELECT = 'Job_No,Job_Task_No,Line_No,Type,No,Description,Variant_Code,Quantity,Quantity_Base,Unit_of_Measure_Code,KVT_Qty_Picked,KVT_Completely_Picked,LVS_Cancelled_Original_Line,LVS_Work_Order_No,Location_Code,Bin_Code';
-const PENATES_ITEM_SELECT = 'No,Description,LVS_Description_2,Description_2,Base_Unit_of_Measure,Safety_Stock_Quantity,Inventory';
+const PENATES_ITEM_SELECT = 'No,Description,LVS_Description_2,Description_2,Base_Unit_of_Measure,Safety_Stock_Quantity,Inventory,Unit_Cost';
 
 const PENATES_REASON_LABELS = [
     'below_minimum' => 'Artikelvoorraad is onder minimumvoorraad',
@@ -210,7 +210,7 @@ function penates_fetch_items(string $company, array $itemNumbers): array
             throw $error;
         }
         $rows = [];
-        $fallbackSelect = 'No,Description,LVS_Description_2,Description_2,Base_Unit_of_Measure';
+        $fallbackSelect = 'No,Description,LVS_Description_2,Description_2,Base_Unit_of_Measure,Unit_Cost';
         foreach (penates_chunks($itemNumbers) as $chunk) {
             $rows = array_merge($rows, penates_fetch_rows_live($company, 'AppItems', [
                 '$select' => $fallbackSelect,
@@ -298,6 +298,11 @@ function penates_item_inventory(array $item): float
         }
     }
     return 0.0;
+}
+
+function penates_item_unit_cost(array $item): float
+{
+    return max(0.0, (float) ($item['Unit_Cost'] ?? $item['Unit_Cost_LCY'] ?? 0));
 }
 
 function penates_format_qty(float $value): string
@@ -479,6 +484,8 @@ function penates_classify_content(
         'quantity' => $quantity,
         'available_quantity' => (float) ($content['CalcQtyAvailToTakeUOM'] ?? 0),
         'pick_quantity' => (float) ($content['Pick_Quantity_Base'] ?? 0),
+        'unit_cost' => penates_item_unit_cost($item),
+        'stock_value' => round(penates_item_unit_cost($item) * $quantity, 2),
         'remaining_need' => $remainingNeed,
         'minimum_stock' => $minimumStock,
         'inventory' => $inventory,
@@ -574,6 +581,7 @@ function penates_build_company_rows(string $company): array
         }
     }
 
+    $rows = penates_attach_warehouse_locations($company, $rows);
     usort($rows, 'penates_compare_rows');
     return $rows;
 }
@@ -758,25 +766,180 @@ function penates_recheck_row(array $existingRow): array
     if ($row === null) {
         return ['keep' => false, 'row' => null, 'message' => 'Voorraad is in orde voor dit artikel.'];
     }
+    if (isset($existingRow['warehouse']) && is_array($existingRow['warehouse'])) {
+        $row['warehouse'] = $existingRow['warehouse'];
+    }
 
     return ['keep' => true, 'row' => $row, 'message' => 'Regel is live bijgewerkt.'];
 }
 
-function penates_recheck_snapshot_row(string $rowId): array
+function penates_find_snapshot_row(string $rowId, ?array $snapshot = null): array
 {
-    $snapshot = penates_read_snapshot();
-    $existing = null;
-    foreach ($snapshot['rows'] as $row) {
-        if (hash_equals((string) ($row['id'] ?? ''), $rowId)) {
-            $existing = $row;
-            break;
+    $snapshot ??= penates_read_snapshot();
+    foreach ($snapshot['rows'] ?? [] as $row) {
+        if (is_array($row) && hash_equals((string) ($row['id'] ?? ''), $rowId)) {
+            return $row;
         }
     }
-    if (!is_array($existing)) {
-        throw new RuntimeException('Regel bestaat niet meer in de snapshot.');
-    }
-    unset($snapshot);
+    throw new RuntimeException('Regel bestaat niet meer in de snapshot.');
+}
 
+function penates_bin_lookup_key(string $location, string $code): string
+{
+    return $location . '|' . $code;
+}
+
+function penates_fetch_bins_for_contents(string $company, array $contents): array
+{
+    $codesByLocation = [];
+    foreach ($contents as $content) {
+        $location = trim((string) ($content['Location_Code'] ?? ''));
+        $code = trim((string) ($content['Bin_Code'] ?? ''));
+        if ($location !== '' && $code !== '') {
+            $codesByLocation[$location][$code] = $code;
+        }
+    }
+
+    $bins = [];
+    foreach ($codesByLocation as $location => $codes) {
+        foreach (penates_chunks($codes) as $chunk) {
+            $bins = array_merge($bins, penates_fetch_rows_live($company, 'Bins', [
+                '$select' => PENATES_BIN_SELECT,
+                '$filter' => penates_odata_equals('Location_Code', $location)
+                    . ' and KVT_Job_Bin eq false and (' . penates_odata_or('Code', $chunk) . ')',
+            ]));
+        }
+    }
+
+    $byKey = [];
+    foreach ($bins as $bin) {
+        $key = penates_bin_lookup_key(
+            trim((string) ($bin['Location_Code'] ?? '')),
+            trim((string) ($bin['Code'] ?? ''))
+        );
+        if ($key !== '|') {
+            $byKey[$key] = $bin;
+        }
+    }
+    return $byKey;
+}
+
+function penates_item_variant_key(string $itemNo, string $variant = ''): string
+{
+    return trim($itemNo) . '|' . trim($variant);
+}
+
+function penates_fetch_bin_contents_for_items(string $company, array $itemNumbers): array
+{
+    $rows = [];
+    foreach (penates_chunks($itemNumbers) as $chunk) {
+        $rows = array_merge($rows, penates_fetch_rows_live($company, 'BinContent', [
+            '$select' => PENATES_CONTENT_SELECT,
+            '$filter' => 'Quantity_Base gt 0 and (' . penates_odata_or('Item_No', $chunk) . ')',
+        ]));
+    }
+    return $rows;
+}
+
+function penates_warehouse_rows_from_contents(array $contents, array $warehouseBins, float $unitCost): array
+{
+    $rows = [];
+    foreach ($contents as $content) {
+        $location = trim((string) ($content['Location_Code'] ?? ''));
+        $code = trim((string) ($content['Bin_Code'] ?? ''));
+        $bin = $warehouseBins[penates_bin_lookup_key($location, $code)] ?? null;
+        if (!is_array($bin)) {
+            continue;
+        }
+        $quantity = (float) ($content['Quantity_Base'] ?? 0);
+        $rows[] = [
+            'location' => $location,
+            'bin' => $code,
+            'bin_description' => trim((string) ($bin['Description'] ?? '')),
+            'quantity' => $quantity,
+            'unit' => trim((string) ($content['Unit_of_Measure_Code'] ?? '')),
+            'unit_cost' => $unitCost,
+            'stock_value' => round($unitCost * $quantity, 2),
+        ];
+    }
+
+    usort($rows, static function (array $left, array $right): int {
+        return strnatcasecmp(
+            implode('|', [$left['location'], $left['bin']]),
+            implode('|', [$right['location'], $right['bin']])
+        );
+    });
+    return $rows;
+}
+
+function penates_warehouse_payload(array $row, array $locations): array
+{
+    $totalQuantity = 0.0;
+    $totalValue = 0.0;
+    foreach ($locations as $location) {
+        $totalQuantity += (float) ($location['quantity'] ?? 0);
+        $totalValue += (float) ($location['stock_value'] ?? 0);
+    }
+
+    return [
+        'locations' => $locations,
+        'total_quantity' => $totalQuantity,
+        'total_value' => round($totalValue, 2),
+    ];
+}
+
+function penates_attach_warehouse_locations(string $company, array $rows): array
+{
+    if ($rows === []) {
+        return [];
+    }
+
+    $contents = penates_fetch_bin_contents_for_items($company, array_column($rows, 'item_no'));
+    $warehouseBins = penates_fetch_bins_for_contents($company, $contents);
+    $contentsByItem = [];
+    foreach ($contents as $content) {
+        $key = penates_item_variant_key(
+            (string) ($content['Item_No'] ?? ''),
+            (string) ($content['Variant_Code'] ?? '')
+        );
+        $contentsByItem[$key][] = $content;
+    }
+
+    foreach ($rows as $index => $row) {
+        $key = penates_item_variant_key(
+            (string) ($row['item_no'] ?? ''),
+            (string) ($row['variant_code'] ?? '')
+        );
+        $unitCost = (float) ($row['unit_cost'] ?? 0);
+        $locations = penates_warehouse_rows_from_contents(
+            $contentsByItem[$key] ?? [],
+            $warehouseBins,
+            $unitCost
+        );
+        $rows[$index]['warehouse'] = penates_warehouse_payload($row, $locations);
+    }
+
+    return $rows;
+}
+
+function penates_cached_warehouse_payload(array $row): array
+{
+    $warehouse = is_array($row['warehouse'] ?? null) ? $row['warehouse'] : ['locations' => [], 'total_quantity' => 0.0, 'total_value' => 0.0];
+    return [
+        'item_no' => trim((string) ($row['item_no'] ?? '')),
+        'variant_code' => trim((string) ($row['variant_code'] ?? '')),
+        'description' => trim((string) ($row['description'] ?? '')),
+        'unit_cost' => (float) ($row['unit_cost'] ?? 0),
+        'locations' => is_array($warehouse['locations'] ?? null) ? $warehouse['locations'] : [],
+        'total_quantity' => (float) ($warehouse['total_quantity'] ?? 0),
+        'total_value' => (float) ($warehouse['total_value'] ?? 0),
+        'cached' => array_key_exists('warehouse', $row),
+    ];
+}
+
+function penates_recheck_snapshot_row(string $rowId): array
+{
+    $existing = penates_find_snapshot_row($rowId);
     $result = penates_recheck_row($existing);
     penates_with_snapshot_lock(static function () use ($rowId, $result): void {
         $current = penates_read_snapshot();

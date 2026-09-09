@@ -24,6 +24,11 @@ function penates_number(float $value): string
     return number_format($value, abs($value - round($value)) < 0.00001 ? 0 : 2, ',', '.');
 }
 
+function penates_money(float $value): string
+{
+    return '€ ' . number_format($value, 2, ',', '.');
+}
+
 function penates_date_time(string $value): string
 {
     if ($value === '') {
@@ -70,7 +75,7 @@ $companyFilter = trim((string) ($_GET['company'] ?? ''));
 $reasonFilter = trim((string) ($_GET['reason'] ?? ''));
 $sortKey = trim((string) ($_GET['sort'] ?? 'company'));
 $sortDirection = strtolower(trim((string) ($_GET['direction'] ?? 'asc'))) === 'desc' ? 'desc' : 'asc';
-$allowedSorts = ['company', 'bin', 'item_no', 'description', 'quantity'];
+$allowedSorts = ['company', 'bin', 'item_no', 'description', 'quantity', 'stock_value'];
 if (!in_array($sortKey, $allowedSorts, true)) {
     $sortKey = 'company';
 }
@@ -98,7 +103,7 @@ $filteredRows = array_values(array_filter($allRows, static function (array $row)
 }));
 
 usort($filteredRows, static function (array $left, array $right) use ($sortKey, $sortDirection): int {
-    if ($sortKey === 'quantity') {
+    if (in_array($sortKey, ['quantity', 'stock_value'], true)) {
         $comparison = ((float) ($left[$sortKey] ?? 0)) <=> ((float) ($right[$sortKey] ?? 0));
     } else {
         $comparison = strnatcasecmp((string) ($left[$sortKey] ?? ''), (string) ($right[$sortKey] ?? ''));
@@ -221,6 +226,37 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
         }
         .toast.show { opacity: 1; transform: none; }
         .toast.error { background: #a52a2a; }
+        .item-link {
+            display: inline; padding: 0; border: 0; background: none;
+            color: #00529b; font: inherit; font-weight: 800; cursor: pointer;
+            text-decoration: underline; text-underline-offset: 3px;
+        }
+        .item-link:hover, .item-link:focus { color: #0099cc; }
+        .modal {
+            position: fixed; inset: 0; z-index: 30; display: none;
+            align-items: center; justify-content: center; padding: 24px;
+            background: rgba(16, 32, 54, .46);
+        }
+        .modal.is-open { display: flex; }
+        .modal-dialog {
+            width: min(860px, 100%); max-height: min(80vh, 720px); overflow: auto;
+            padding: 22px 24px; border-radius: 16px; background: #fff;
+            box-shadow: 0 24px 60px rgba(15, 23, 42, .28);
+        }
+        .modal-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+        .modal-header h2 { margin: 0 0 4px; font-size: 1.2rem; color: #00529b; }
+        .modal-close {
+            flex: 0 0 auto; width: 36px; height: 36px; border: 1px solid var(--kvt-line);
+            border-radius: 9px; background: #fff; color: #34445a; cursor: pointer;
+        }
+        .modal-close:hover { background: #f3faff; }
+        .modal-meta { margin: 0 0 14px; color: var(--kvt-muted); font-size: .86rem; }
+        .modal-table { width: 100%; border-collapse: collapse; font-size: .89rem; }
+        .modal-table th, .modal-table td { padding: 10px 8px; border-bottom: 1px solid #e8edf4; text-align: left; }
+        .modal-table th { color: #34445a; background: #f8fafc; }
+        .modal-table tfoot td { font-weight: 800; border-bottom: 0; }
+        .modal-empty { padding: 28px 8px; color: var(--kvt-muted); }
+        .numeric { text-align: right; white-space: nowrap; }
         @media (max-width: 850px) {
             .page { padding: 12px; }
             .hero { padding: 18px; flex-direction: column; }
@@ -296,7 +332,7 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
             <table>
                 <thead>
                     <tr>
-                        <?php foreach (['company' => 'Bedrijf', 'bin' => 'Project / bin', 'item_no' => 'Artikel', 'description' => 'Omschrijving', 'quantity' => 'Aantal'] as $key => $label): ?>
+                        <?php foreach (['company' => 'Bedrijf', 'bin' => 'Project / bin', 'item_no' => 'Artikel', 'description' => 'Omschrijving', 'quantity' => 'Aantal', 'stock_value' => 'Voorraadwaarde'] as $key => $label): ?>
                             <?php $nextDirection = $sortKey === $key && $sortDirection === 'asc' ? 'desc' : 'asc'; ?>
                             <th class="<?= $sortKey === $key ? 'is-' . penates_h($sortDirection) : '' ?>"><a href="<?= penates_h(penates_page_url(['sort' => $key, 'direction' => $nextDirection, 'page' => 1])) ?>"><?= penates_h($label) ?></a></th>
                         <?php endforeach; ?>
@@ -326,12 +362,19 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
                         data-item_no-sort="<?= penates_h($row['item_no'] ?? '') ?>"
                         data-description-sort="<?= penates_h($row['description'] ?? '') ?>"
                         data-quantity-sort="<?= penates_h($row['quantity'] ?? 0) ?>"
+                        data-stock_value-sort="<?= penates_h($row['stock_value'] ?? 0) ?>"
                     >
                         <td><?= penates_h($row['company'] ?? '') ?><div class="muted"><?= penates_h($row['location'] ?? '') ?></div></td>
                         <td><span class="strong"><?= penates_h($row['bin'] ?? '') ?></span><div class="muted"><?= penates_h($row['bin_description'] ?? '') ?></div></td>
-                        <td><span class="strong nowrap"><?= penates_h($row['item_no'] ?? '') ?></span><?php if (($row['variant_code'] ?? '') !== ''): ?><div class="muted">Variant <?= penates_h($row['variant_code']) ?></div><?php endif; ?></td>
+                        <td>
+                            <button class="item-link" type="button" data-row-id="<?= penates_h($row['id'] ?? '') ?>">
+                                <?= penates_h($row['item_no'] ?? '') ?>
+                            </button>
+                            <?php if (($row['variant_code'] ?? '') !== ''): ?><div class="muted">Variant <?= penates_h($row['variant_code']) ?></div><?php endif; ?>
+                        </td>
                         <td><?= penates_h($row['description'] ?? '') ?><div class="muted"><?= penates_h($row['description_2'] ?? '') ?></div></td>
                         <td class="nowrap"><span data-role="quantity"><?= penates_h(penates_number((float) ($row['quantity'] ?? 0))) ?></span> <?= penates_h($row['unit'] ?? '') ?></td>
+                        <td class="nowrap numeric" data-role="stock-value"><?= penates_h(penates_money((float) ($row['stock_value'] ?? 0))) ?></td>
                         <td><div class="workorders" data-role="workorders"><?php foreach (($row['workorders'] ?? []) as $workorder): ?><span class="badge workorder"><?= penates_h(penates_workorder_label($workorder)) ?></span><?php endforeach; ?></div></td>
                         <td><div class="reason-list" data-role="reasons"><?php foreach (($row['reasons'] ?? []) as $reason): ?><span class="badge reason"><?= penates_h($reason) ?></span><?php endforeach; ?></div><div class="muted" data-role="checked">Gecontroleerd <?= penates_h(penates_date_time((string) ($row['checked_at'] ?? ''))) ?></div></td>
                         <td class="check-cell"><button class="recheck" type="button" title="Controleer dit artikel nu opnieuw in BC" aria-label="Controleer artikel opnieuw">↻</button></td>
@@ -356,6 +399,18 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
     </section>
 </main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="modal" id="locations-modal" hidden>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="locations-title">
+        <div class="modal-header">
+            <div>
+                <h2 id="locations-title">Opslaglocaties</h2>
+                <p class="modal-meta" id="locations-meta"></p>
+            </div>
+            <button class="modal-close" type="button" aria-label="Sluiten">×</button>
+        </div>
+        <div id="locations-body"></div>
+    </div>
+</div>
 <script>
 (() => {
     const csrfToken = <?= json_encode((string) $_SESSION['penates_csrf_token'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
@@ -393,8 +448,16 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
         element.dataset.id = String(data.id);
         element.dataset.reasons = (data.reason_codes || []).join('|');
         element.dataset.quantitySort = String(data.quantity || 0);
+        element.dataset.stock_valueSort = String(data.stock_value || 0);
         element.querySelector('[data-role="quantity"]').textContent =
             Number(data.quantity || 0).toLocaleString('nl-NL', {maximumFractionDigits: 2});
+        const stockValue = element.querySelector('[data-role="stock-value"]');
+        if (stockValue) {
+            stockValue.textContent = '€ ' + Number(data.stock_value || 0).toLocaleString('nl-NL', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            });
+        }
 
         const workorders = element.querySelector('[data-role="workorders"]');
         workorders.replaceChildren(...(data.workorders || []).map(item => badge(workorderLabel(item), 'workorder')));
@@ -452,9 +515,132 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
         }
     }
 
+    const modal = document.getElementById('locations-modal');
+    const modalMeta = document.getElementById('locations-meta');
+    const modalBody = document.getElementById('locations-body');
+    const modalClose = modal.querySelector('.modal-close');
+
+    function formatMoney(value) {
+        return '€ ' + Number(value || 0).toLocaleString('nl-NL', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+
+    function formatQty(value) {
+        return Number(value || 0).toLocaleString('nl-NL', {maximumFractionDigits: 2});
+    }
+
+    function el(tag, className, text) {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        if (text !== undefined) element.textContent = text;
+        return element;
+    }
+
+    function closeModal() {
+        modal.classList.remove('is-open');
+        modal.setAttribute('hidden', '');
+    }
+
+    function openModal() {
+        modal.removeAttribute('hidden');
+        modal.classList.add('is-open');
+        modalClose.focus();
+    }
+
+    function setModalMessage(text) {
+        modalBody.replaceChildren(el('p', 'modal-empty', text));
+    }
+
+    function renderLocations(data) {
+        const title = [data.item_no, data.description].filter(Boolean).join(' · ');
+        document.getElementById('locations-title').textContent = title || 'Opslaglocaties';
+        const parts = ['Uit nachtelijke cache', 'alleen opslaglocaties zonder projectlocatie'];
+        if (data.variant_code) parts.push('Variant ' + data.variant_code);
+        parts.push('Stukprijs ' + formatMoney(data.unit_cost));
+        modalMeta.textContent = parts.join(' · ');
+
+        if (!data.cached) {
+            setModalMessage('Deze opslaglocaties staan nog niet in de snapshot. Ze verschijnen na de volgende nachtelijke controle.');
+            return;
+        }
+        if (!data.locations || data.locations.length === 0) {
+            setModalMessage('Dit artikel ligt niet in een niet-project opslaglocatie.');
+            return;
+        }
+
+        const table = el('table', 'modal-table');
+        const head = table.createTHead();
+        const headRow = head.insertRow();
+        ['Vestiging', 'Opslaglocatie', 'Aantal', 'Waarde'].forEach((label, index) => {
+            const cell = document.createElement('th');
+            cell.textContent = label;
+            if (index > 1) cell.className = 'numeric';
+            headRow.append(cell);
+        });
+        const bodyEl = table.createTBody();
+        data.locations.forEach(item => {
+            const row = bodyEl.insertRow();
+            row.insertCell().textContent = item.location || '';
+            const binCell = row.insertCell();
+            binCell.append(el('span', 'strong', item.bin || ''));
+            if (item.bin_description) binCell.append(el('div', 'muted', item.bin_description));
+            const qtyCell = row.insertCell();
+            qtyCell.className = 'numeric';
+            qtyCell.textContent = formatQty(item.quantity) + (item.unit ? ' ' + item.unit : '');
+            const valueCell = row.insertCell();
+            valueCell.className = 'numeric';
+            valueCell.textContent = formatMoney(item.stock_value);
+        });
+        const foot = table.createTFoot();
+        const footRow = foot.insertRow();
+        const totalLabel = footRow.insertCell();
+        totalLabel.colSpan = 2;
+        totalLabel.textContent = 'Totaal';
+        const totalQty = footRow.insertCell();
+        totalQty.className = 'numeric';
+        totalQty.textContent = formatQty(data.total_quantity);
+        const totalValue = footRow.insertCell();
+        totalValue.className = 'numeric';
+        totalValue.textContent = formatMoney(data.total_value);
+        modalBody.replaceChildren(table);
+    }
+
+    async function showLocations(rowId) {
+        document.getElementById('locations-title').textContent = 'Opslaglocaties';
+        modalMeta.textContent = 'Uit nachtelijke cache';
+        setModalMessage('Snapshot laden…');
+        openModal();
+        try {
+            const form = new URLSearchParams({row_id: rowId, csrf_token: csrfToken});
+            const response = await fetch('locations.php', {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: {'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded'},
+                body: form
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.error || 'Opslaglocaties ophalen mislukt.');
+            }
+            renderLocations(payload);
+        } catch (error) {
+            closeModal();
+            showToast(error instanceof Error ? error.message : 'Opslaglocaties ophalen mislukt.', true);
+        }
+    }
+
     body.addEventListener('click', event => {
         const button = event.target.closest('.recheck');
         if (button) recheck(button);
+        const itemLink = event.target.closest('.item-link');
+        if (itemLink) showLocations(itemLink.dataset.rowId);
+    });
+    modal.addEventListener('click', event => {
+        if (event.target === modal) closeModal();
+    });
+    modalClose.addEventListener('click', closeModal);
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && modal.classList.contains('is-open')) closeModal();
     });
 })();
 </script>

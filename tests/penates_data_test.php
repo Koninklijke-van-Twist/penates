@@ -53,7 +53,7 @@ function test_line(string $workorder, float $quantity, float $picked, bool $comp
 
 $bin = ['Location_Code' => 'KVT', 'Code' => 'P100', 'Description' => 'Project P100'];
 $content = test_base_content();
-$item = ['No' => 'ITEM-1', 'Description' => 'Testartikel'];
+$item = ['No' => 'ITEM-1', 'Description' => 'Testartikel', 'Unit_Cost' => 12.5];
 
 foreach (['Ondertekend', 'Gecontroleerd', 'Gefactureerd', 'Afgesloten', 'Geannuleerd'] as $status) {
     test_assert(penates_is_terminal_status($status), "{$status} moet een eindstatus zijn");
@@ -81,6 +81,7 @@ $picked = penates_classify_content(
     $item
 );
 test_assert(in_array('fully_picked', $picked['reason_codes'] ?? [], true), 'Volledig gepickt artikel mist reden');
+test_assert(($picked['stock_value'] ?? 0) === 25.0, 'Voorraadwaarde moet stukprijs × aantal zijn');
 
 $missing = penates_classify_content(
     'Koninklijke van Twist',
@@ -188,5 +189,28 @@ $enoughForWorkorder = penates_classify_content(
     $item
 );
 test_assert($enoughForWorkorder === null, 'Binvoorraad die de openstaande pick dekt moet buiten het resultaat blijven');
+
+$warehouse = penates_warehouse_rows_from_contents(
+    [
+        ['Location_Code' => 'KVT', 'Bin_Code' => 'A-01', 'Quantity_Base' => 4, 'Unit_of_Measure_Code' => 'PCS'],
+        ['Location_Code' => 'KVT', 'Bin_Code' => 'P100', 'Quantity_Base' => 2, 'Unit_of_Measure_Code' => 'PCS'],
+    ],
+    [
+        'KVT|A-01' => ['Location_Code' => 'KVT', 'Code' => 'A-01', 'Description' => 'Stelling', 'KVT_Job_Bin' => false],
+    ],
+    10.0
+);
+test_assert(count($warehouse) === 1, 'Projectbins mogen niet in de warehouse-cache');
+test_assert(($warehouse[0]['stock_value'] ?? 0) === 40.0, 'Warehouse-waarde moet stukprijs × aantal zijn');
+
+$cached = penates_cached_warehouse_payload([
+    'item_no' => 'ITEM-1',
+    'variant_code' => '',
+    'description' => 'Testartikel',
+    'unit_cost' => 10,
+    'warehouse' => ['locations' => $warehouse, 'total_quantity' => 4, 'total_value' => 40],
+]);
+test_assert($cached['cached'] === true, 'Snapshotregel moet als cache worden herkend');
+test_assert(count($cached['locations']) === 1, 'Cache-payload mist opslaglocaties');
 
 echo "OK penates_data_test\n";
