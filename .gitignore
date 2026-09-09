@@ -5,6 +5,8 @@ web/cache/
 
 BC Webservices.txt
 
+web/analytics/*.sqlite
+web/analytics/*.sqlite-*
 web/data/user_prefs/
 web/data/*.sqlite
 web/data/*.sqlite-*
