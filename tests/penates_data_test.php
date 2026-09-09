@@ -134,4 +134,59 @@ $noMaterial = penates_classify_content(
 );
 test_assert(in_array('no_material_needed', $noMaterial['reason_codes'] ?? [], true), 'Geen-materiaal-indicatie mist reden');
 
+$atMinimum = penates_classify_content(
+    'Koninklijke van Twist',
+    $bin,
+    $content,
+    [test_workorder('WO1', 'Afgesloten')],
+    [test_line('WO1', 2, 0)],
+    ['No' => 'ITEM-1', 'Description' => 'Testartikel', 'Safety_Stock_Quantity' => 2, 'Inventory' => 2]
+);
+test_assert($atMinimum === null, 'Restvoorraad op de minimumvoorraad mag niet in het resultaat');
+
+$belowMinimum = penates_classify_content(
+    'Koninklijke van Twist',
+    $bin,
+    $content,
+    [test_workorder('WO1', 'Afgesloten')],
+    [test_line('WO1', 2, 0)],
+    ['No' => 'ITEM-1', 'Description' => 'Testartikel', 'Safety_Stock_Quantity' => 5, 'Inventory' => 2]
+);
+test_assert(in_array('below_minimum', $belowMinimum['reason_codes'] ?? [], true), 'Voorraad onder minimum mist reden');
+test_assert(!in_array('workorders_finished', $belowMinimum['reason_codes'] ?? [], true), 'Onder minimum is geen restvoorraad');
+
+$shortContent = test_base_content();
+$shortContent['Quantity_Base'] = 15;
+$shortContent['CalcQtyAvailToTakeUOM'] = 15;
+$shortage = penates_classify_content(
+    'Koninklijke van Twist',
+    $bin,
+    $shortContent,
+    [test_workorder('WO1')],
+    [test_line('WO1', 20, 0)],
+    $item
+);
+test_assert(in_array('insufficient_stock', $shortage['reason_codes'] ?? [], true), 'Tekort t.o.v. werkorder mist reden');
+test_assert(($shortage['remaining_need'] ?? 0) === 20.0, 'Openstaande werkorderbehoefte is onjuist');
+
+$pickedAway = penates_classify_content(
+    'Koninklijke van Twist',
+    $bin,
+    $shortContent,
+    [test_workorder('WO1')],
+    [test_line('WO1', 20, 20, true)],
+    $item
+);
+test_assert(in_array('fully_picked', $pickedAway['reason_codes'] ?? [], true), 'Volledig gepickte behoefte mag niet als tekort tellen');
+
+$enoughForWorkorder = penates_classify_content(
+    'Koninklijke van Twist',
+    $bin,
+    $shortContent,
+    [test_workorder('WO1')],
+    [test_line('WO1', 20, 5)],
+    $item
+);
+test_assert($enoughForWorkorder === null, 'Binvoorraad die de openstaande pick dekt moet buiten het resultaat blijven');
+
 echo "OK penates_data_test\n";

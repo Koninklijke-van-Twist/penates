@@ -1,7 +1,10 @@
 # Penates
 
-Overzicht van artikelen die nog in een Business Central-projectbin liggen, maar
-door geen actief werkorder meer nodig zijn.
+Overzicht van artikelen in Business Central-projectbins die aandacht nodig
+hebben: restvoorraad die geen actief werkorder meer nodig heeft, voorraad
+onder de minimumvoorraad, of te weinig voor openstaande (nog niet gepickte)
+werkorderbehoefte. Restvoorraad die precies de minimumvoorraad dekt blijft
+buiten het overzicht.
 
 ## Werking
 

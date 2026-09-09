@@ -63,13 +63,7 @@ $companyNames = array_values(array_unique(array_filter(array_map(
 natcasesort($companyNames);
 $companyNames = array_values($companyNames);
 
-$reasonLabels = [];
-foreach ($allRows as $row) {
-    foreach (($row['reason_codes'] ?? []) as $index => $code) {
-        $reasonLabels[(string) $code] = (string) (($row['reasons'] ?? [])[$index] ?? $code);
-    }
-}
-ksort($reasonLabels);
+$reasonLabels = penates_reason_labels($allRows);
 
 $searchQuery = trim((string) ($_GET['q'] ?? ''));
 $companyFilter = trim((string) ($_GET['company'] ?? ''));

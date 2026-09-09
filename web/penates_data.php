@@ -12,7 +12,17 @@ const PENATES_BIN_SELECT = 'Location_Code,Code,Description,Empty,KVT_Job_Bin';
 const PENATES_CONTENT_SELECT = 'Location_Code,Bin_Code,Item_No,Variant_Code,Unit_of_Measure_Code,Quantity_Base,Pick_Quantity_Base,CalcQtyAvailToTakeUOM';
 const PENATES_WORKORDER_SELECT = 'No,Job_No,Job_Task_No,Task_Description,Status,KVT_Document_Status,KVT_No_Material_Needed,Start_Date';
 const PENATES_LINE_SELECT = 'Job_No,Job_Task_No,Line_No,Type,No,Description,Variant_Code,Quantity,Quantity_Base,Unit_of_Measure_Code,KVT_Qty_Picked,KVT_Completely_Picked,LVS_Cancelled_Original_Line,LVS_Work_Order_No,Location_Code,Bin_Code';
-const PENATES_ITEM_SELECT = 'No,Description,LVS_Description_2,Description_2,Base_Unit_of_Measure';
+const PENATES_ITEM_SELECT = 'No,Description,LVS_Description_2,Description_2,Base_Unit_of_Measure,Safety_Stock_Quantity,Inventory';
+
+const PENATES_REASON_LABELS = [
+    'below_minimum' => 'Artikelvoorraad is onder minimumvoorraad',
+    'insufficient_stock' => 'Te weinig voorraad voor open werkorderbehoefte',
+    'no_workorder' => 'Geen gekoppeld werkorder gevonden',
+    'workorders_finished' => 'Alle gekoppelde werkorders zijn afgerond of geannuleerd',
+    'item_not_on_workorder' => 'Artikel staat niet op een relevant actief werkorder',
+    'no_material_needed' => 'Actieve werkorders geven aan dat geen materiaal nodig is',
+    'fully_picked' => 'Alle overeenkomende werkorderregels zijn volledig gepickt',
+];
 
 function penates_escape_odata_string(string $value): string
 {
@@ -188,11 +198,25 @@ function penates_fetch_lines_for_context(string $company, array $binCodes, array
 function penates_fetch_items(string $company, array $itemNumbers): array
 {
     $rows = [];
-    foreach (penates_chunks($itemNumbers) as $chunk) {
-        $rows = array_merge($rows, penates_fetch_rows_live($company, 'AppItems', [
-            '$select' => PENATES_ITEM_SELECT,
-            '$filter' => penates_odata_or('No', $chunk),
-        ]));
+    try {
+        foreach (penates_chunks($itemNumbers) as $chunk) {
+            $rows = array_merge($rows, penates_fetch_rows_live($company, 'AppItemCard', [
+                '$select' => PENATES_ITEM_SELECT,
+                '$filter' => penates_odata_or('No', $chunk),
+            ]));
+        }
+    } catch (Throwable $error) {
+        if (!str_contains($error->getMessage(), "property named '")) {
+            throw $error;
+        }
+        $rows = [];
+        $fallbackSelect = 'No,Description,LVS_Description_2,Description_2,Base_Unit_of_Measure';
+        foreach (penates_chunks($itemNumbers) as $chunk) {
+            $rows = array_merge($rows, penates_fetch_rows_live($company, 'AppItems', [
+                '$select' => $fallbackSelect,
+                '$filter' => penates_odata_or('No', $chunk),
+            ]));
+        }
     }
     return penates_unique_rows($rows, static fn(array $row): string => (string) ($row['No'] ?? ''));
 }
@@ -250,6 +274,38 @@ function penates_line_is_fully_picked(array $line): bool
     return $quantity > 0 && $picked >= $quantity;
 }
 
+function penates_line_remaining_need(array $line): float
+{
+    if (penates_is_cancelled_line($line) || penates_line_is_fully_picked($line)) {
+        return 0.0;
+    }
+
+    $quantity = (float) ($line['Quantity_Base'] ?? $line['Quantity'] ?? 0);
+    $picked = (float) ($line['KVT_Qty_Picked'] ?? 0);
+    return max(0.0, $quantity - $picked);
+}
+
+function penates_item_minimum_stock(array $item): float
+{
+    return max(0.0, (float) ($item['Safety_Stock_Quantity'] ?? 0));
+}
+
+function penates_item_inventory(array $item): float
+{
+    foreach (['Inventory', 'InventoryField'] as $field) {
+        if (array_key_exists($field, $item) && $item[$field] !== null && $item[$field] !== '') {
+            return (float) $item[$field];
+        }
+    }
+    return 0.0;
+}
+
+function penates_format_qty(float $value): string
+{
+    $formatted = number_format($value, 2, ',', '.');
+    return rtrim(rtrim($formatted, '0'), ',');
+}
+
 function penates_line_belongs_to_workorder(array $line, array $workorder): bool
 {
     $lineWorkorder = trim((string) ($line['LVS_Work_Order_No'] ?? ''));
@@ -290,8 +346,25 @@ function penates_workorder_summary(array $workorder): array
     ];
 }
 
+function penates_reason_labels(array $rows = []): array
+{
+    $labels = PENATES_REASON_LABELS;
+    foreach ($rows as $row) {
+        foreach (($row['reason_codes'] ?? []) as $index => $code) {
+            $code = (string) $code;
+            if ($code === '' || isset($labels[$code])) {
+                continue;
+            }
+            $labels[$code] = (string) (($row['reasons'] ?? [])[$index] ?? $code);
+        }
+    }
+    return $labels;
+}
+
 /**
- * Geeft null terug als minstens één actief werkorder dit artikel nog nodig heeft.
+ * Geeft null terug als de binvoorraad in orde is: een actief werkorder
+ * heeft het artikel nog nodig én er ligt genoeg, of restvoorraad dekt
+ * precies de minimumvoorraad.
  */
 function penates_classify_content(
     string $company,
@@ -329,40 +402,64 @@ function penates_classify_content(
         }
     }
 
+    $quantity = (float) ($content['Quantity_Base'] ?? 0);
+    $remainingNeed = 0.0;
     foreach ($matchingActiveLines as $line) {
-        if (!penates_line_is_fully_picked($line)) {
-            return null;
-        }
+        $remainingNeed += penates_line_remaining_need($line);
     }
+
+    $minimumStock = penates_item_minimum_stock($item);
+    $inventory = penates_item_inventory($item);
+    $belowMinimum = $minimumStock > 0 && $inventory < $minimumStock;
+    $atOrBelowMinimum = $minimumStock > 0 && $inventory <= $minimumStock;
+    $insufficientStock = $remainingNeed > $quantity + 0.00001;
 
     $reasonCodes = [];
     $reasons = [];
-    if ($associated === []) {
-        $reasonCodes[] = 'no_workorder';
-        $reasons[] = 'Geen gekoppeld werkorder gevonden';
-    } elseif ($active === []) {
-        $reasonCodes[] = 'workorders_finished';
-        $statuses = array_values(array_unique(array_filter(array_map(
-            static fn(array $workorder): string => trim((string) ($workorder['Status'] ?? '')),
-            $associated
-        ))));
-        $reasons[] = 'Alle gekoppelde werkorders zijn afgerond of geannuleerd'
-            . ($statuses !== [] ? ' (' . implode(', ', $statuses) . ')' : '');
-    } elseif ($matchingActiveLines === []) {
-        if (count($activeWithoutMaterial) === count($active)) {
-            $reasonCodes[] = 'no_material_needed';
-            $reasons[] = 'Actieve werkorders geven aan dat geen materiaal nodig is';
-        } else {
-            $reasonCodes[] = 'item_not_on_workorder';
-            $reasons[] = 'Artikel staat niet op een relevant actief werkorder';
-            if ($activeWithoutMaterial !== []) {
+    if ($belowMinimum) {
+        $reasonCodes[] = 'below_minimum';
+        $reasons[] = PENATES_REASON_LABELS['below_minimum']
+            . ' (' . penates_format_qty($inventory) . ' op voorraad, minimum ' . penates_format_qty($minimumStock) . ')';
+    }
+    if ($insufficientStock) {
+        $reasonCodes[] = 'insufficient_stock';
+        $reasons[] = PENATES_REASON_LABELS['insufficient_stock']
+            . ' (' . penates_format_qty($quantity) . ' in bin, ' . penates_format_qty($remainingNeed) . ' nog nodig)';
+    }
+
+    $leftover = $remainingNeed <= 0.00001;
+    if ($leftover && !$atOrBelowMinimum) {
+        if ($associated === []) {
+            $reasonCodes[] = 'no_workorder';
+            $reasons[] = PENATES_REASON_LABELS['no_workorder'];
+        } elseif ($active === []) {
+            $reasonCodes[] = 'workorders_finished';
+            $statuses = array_values(array_unique(array_filter(array_map(
+                static fn(array $workorder): string => trim((string) ($workorder['Status'] ?? '')),
+                $associated
+            ))));
+            $reasons[] = PENATES_REASON_LABELS['workorders_finished']
+                . ($statuses !== [] ? ' (' . implode(', ', $statuses) . ')' : '');
+        } elseif ($matchingActiveLines === []) {
+            if (count($activeWithoutMaterial) === count($active)) {
                 $reasonCodes[] = 'no_material_needed';
-                $reasons[] = 'Een actief werkorder geeft aan dat geen materiaal nodig is';
+                $reasons[] = PENATES_REASON_LABELS['no_material_needed'];
+            } else {
+                $reasonCodes[] = 'item_not_on_workorder';
+                $reasons[] = PENATES_REASON_LABELS['item_not_on_workorder'];
+                if ($activeWithoutMaterial !== []) {
+                    $reasonCodes[] = 'no_material_needed';
+                    $reasons[] = 'Een actief werkorder geeft aan dat geen materiaal nodig is';
+                }
             }
+        } else {
+            $reasonCodes[] = 'fully_picked';
+            $reasons[] = PENATES_REASON_LABELS['fully_picked'];
         }
-    } else {
-        $reasonCodes[] = 'fully_picked';
-        $reasons[] = 'Alle overeenkomende werkorderregels zijn volledig gepickt';
+    }
+
+    if ($reasonCodes === []) {
+        return null;
     }
 
     $description = trim((string) ($item['Description'] ?? ''));
@@ -379,9 +476,12 @@ function penates_classify_content(
         'variant_code' => trim((string) ($content['Variant_Code'] ?? '')),
         'description' => $description,
         'description_2' => trim((string) ($item['LVS_Description_2'] ?? $item['Description_2'] ?? '')),
-        'quantity' => (float) ($content['Quantity_Base'] ?? 0),
+        'quantity' => $quantity,
         'available_quantity' => (float) ($content['CalcQtyAvailToTakeUOM'] ?? 0),
         'pick_quantity' => (float) ($content['Pick_Quantity_Base'] ?? 0),
+        'remaining_need' => $remainingNeed,
+        'minimum_stock' => $minimumStock,
+        'inventory' => $inventory,
         'unit' => trim((string) ($content['Unit_of_Measure_Code'] ?? $item['Base_Unit_of_Measure'] ?? '')),
         'workorders' => array_map('penates_workorder_summary', $associated),
         'reason_codes' => $reasonCodes,
@@ -656,7 +756,7 @@ function penates_recheck_row(array $existingRow): array
     $items = penates_fetch_items($company, [$itemNo]);
     $row = penates_classify_content($company, $bin, $content, $workorders, $lines, $items[0] ?? []);
     if ($row === null) {
-        return ['keep' => false, 'row' => null, 'message' => 'Een actief werkorder heeft dit artikel nog nodig.'];
+        return ['keep' => false, 'row' => null, 'message' => 'Voorraad is in orde voor dit artikel.'];
     }
 
     return ['keep' => true, 'row' => $row, 'message' => 'Regel is live bijgewerkt.'];
