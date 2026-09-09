@@ -139,10 +139,12 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
             box-shadow: 0 16px 38px rgba(0, 82, 155, .16);
         }
         .hero-main { display: flex; gap: 18px; align-items: center; }
-        .hero-icon {
-            display: grid; place-items: center; width: 64px; height: 64px; flex: 0 0 auto;
-            border-radius: 16px; background: rgba(255,255,255,.15); font-size: 34px;
+        .hero-logo {
+            display: grid; place-items: center; flex: 0 0 auto;
+            padding: 12px 16px; border-radius: 16px; background: #fff;
+            box-shadow: 0 8px 20px rgba(0, 30, 60, .16);
         }
+        .hero-logo img { display: block; width: auto; height: 40px; }
         h1 { margin: 0 0 6px; font-size: clamp(1.65rem, 3vw, 2.35rem); }
         .hero p { margin: 0; max-width: 760px; color: rgba(255,255,255,.86); }
         .snapshot { flex: 0 0 auto; text-align: right; font-size: .83rem; color: rgba(255,255,255,.8); }
@@ -231,7 +233,8 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
             .snapshot { text-align: left; }
             .toolbar { grid-template-columns: 1fr; }
             .stats { grid-template-columns: 1fr; }
-            .hero-icon { display: none; }
+            .hero-logo { padding: 9px 12px; }
+            .hero-logo img { height: 28px; }
         }
     </style>
 </head>
@@ -239,7 +242,9 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
 <main class="page">
     <header class="hero">
         <div class="hero-main">
-            <div class="hero-icon" aria-hidden="true">⌂</div>
+            <div class="hero-logo">
+                <img src="logo-website.png" alt="Koninklijke van Twist" width="1378" height="364">
+            </div>
             <div>
                 <h1>Penates</h1>
                 <p>Artikelen die nog in een projectbin liggen, maar door geen actief werkorder meer nodig zijn.</p>
