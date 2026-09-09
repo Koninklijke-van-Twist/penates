@@ -1,0 +1,14 @@
+
+web/auth.php
+
+web/cache/
+
+BC Webservices.txt
+
+web/data/user_prefs/
+web/data/*.sqlite
+web/data/*.sqlite-*
+web/data/penates_snapshot.json
+web/data/penates_snapshot.json.tmp.*
+web/data/penates_snapshot.lock
+data/user_prefs/

@@ -1,0 +1,44 @@
+<?php
+
+function is_trusted_requester(): bool
+{
+    $remote = $_SERVER['REMOTE_ADDR'] ?? '';
+    $server = $_SERVER['SERVER_ADDR'] ?? '';
+    $trusted = ['127.0.0.1', '::1'];
+    if ($remote === $server && $remote !== '') {
+        return true;
+    }
+    if (in_array($remote, $trusted, true)) {
+        return true;
+    }
+    return false;
+}
+
+if (is_trusted_requester()) {
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        @session_start();
+    }
+
+    $currentEmail = strtolower(trim((string) ($_SESSION['user']['email'] ?? '')));
+    $defaultAllowedUser = strtolower(trim((string) ($allowedUsers[0] ?? '')));
+    if ($currentEmail === '' && $defaultAllowedUser !== '') {
+        if (!is_array($_SESSION['user'] ?? null)) {
+            $_SESSION['user'] = [];
+        }
+
+        $_SESSION['user']['email'] = $defaultAllowedUser;
+    }
+}
+
+if (!is_trusted_requester()) {
+    require __DIR__ . "/../login/lib.php";
+
+    if (
+        !array_any($allowedUsers, function ($email) {
+            return strtolower((string) $email) === strtolower((string) ($_SESSION['user']['email'] ?? ''));
+        })
+    ) {
+        require __DIR__ . "/../login/403.php";
+        die();
+    }
+}
