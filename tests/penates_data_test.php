@@ -190,6 +190,55 @@ $enoughForWorkorder = penates_classify_content(
 );
 test_assert($enoughForWorkorder === null, 'Binvoorraad die de openstaande pick dekt moet buiten het resultaat blijven');
 
+$finishedProject = penates_classify_content(
+    'Koninklijke van Twist',
+    $bin,
+    $shortContent,
+    [test_workorder('WO1')],
+    [test_line('WO1', 15, 0)],
+    $item,
+    ['No' => 'P100', 'Status' => 'Open', 'LVS_Document_Status' => '04 FINISHED']
+);
+test_assert(
+    in_array('project_finished', $finishedProject['reason_codes'] ?? [], true),
+    'Voorraad bij een afgerond project mist reden'
+);
+
+$lessThanPickedContent = test_base_content();
+$lessThanPickedContent['Quantity_Base'] = 4;
+$lessThanPicked = penates_classify_content(
+    'Koninklijke van Twist',
+    $bin,
+    $lessThanPickedContent,
+    [test_workorder('WO1')],
+    [test_line('WO1', 10, 6)],
+    $item
+);
+test_assert(
+    in_array('less_than_picked', $lessThanPicked['reason_codes'] ?? [], true),
+    'Binvoorraad onder gepickte hoeveelheid mist reden'
+);
+test_assert(
+    ($lessThanPicked['workorder_picked_quantity'] ?? 0) === 6.0,
+    'Totale gepickte hoeveelheid is onjuist'
+);
+
+$binPickContent = test_base_content();
+$binPickContent['Quantity_Base'] = 4;
+$binPickContent['Pick_Quantity_Base'] = 5;
+$lessThanBinPick = penates_classify_content(
+    'Koninklijke van Twist',
+    $bin,
+    $binPickContent,
+    [test_workorder('WO1')],
+    [test_line('WO1', 4, 0)],
+    $item
+);
+test_assert(
+    in_array('less_than_picked', $lessThanBinPick['reason_codes'] ?? [], true),
+    'Binvoorraad onder Pick Quantity Base mist reden'
+);
+
 $warehouse = penates_warehouse_rows_from_contents(
     [
         ['Location_Code' => 'KVT', 'Bin_Code' => 'A-01', 'Quantity_Base' => 4, 'Unit_of_Measure_Code' => 'PCS'],

@@ -137,6 +137,13 @@ $resultCount = count($filteredRows);
 $pageCount = max(1, (int) ceil($resultCount / $perPage));
 $page = max(1, min($pageCount, (int) ($_GET['page'] ?? 1)));
 $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
+$warehousePayloads = [];
+foreach ($rows as $row) {
+    $rowId = (string) ($row['id'] ?? '');
+    if ($rowId !== '') {
+        $warehousePayloads[$rowId] = penates_cached_warehouse_payload($row);
+    }
+}
 ?><!doctype html>
 <html lang="nl">
 <head>
@@ -436,6 +443,7 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
 <script>
 (() => {
     const csrfToken = <?= json_encode((string) $_SESSION['penates_csrf_token'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const warehousePayloads = <?= json_encode($warehousePayloads, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     const body = document.getElementById('results');
     const visibleCount = document.getElementById('visible-count');
     const toast = document.getElementById('toast');
@@ -635,29 +643,16 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
         modalBody.replaceChildren(table);
     }
 
-    async function showLocations(rowId) {
+    function showLocations(rowId) {
         document.getElementById('locations-title').textContent = 'Opslaglocaties';
         modalMeta.textContent = 'Uit nachtelijke cache';
-        setModalMessage('Snapshot laden…');
         openModal();
-        try {
-            const form = new URLSearchParams({row_id: rowId, csrf_token: csrfToken});
-            const response = await fetch('locations.php', {
-                method: 'POST',
-                credentials: 'same-origin',
-                cache: 'no-store',
-                headers: {'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded'},
-                body: form
-            });
-            const payload = await response.json();
-            if (!response.ok || !payload.ok) {
-                throw new Error(payload.error || 'Opslaglocaties ophalen mislukt.');
-            }
-            renderLocations(payload);
-        } catch (error) {
-            closeModal();
-            showToast(error instanceof Error ? error.message : 'Opslaglocaties ophalen mislukt.', true);
+        const payload = warehousePayloads[rowId];
+        if (!payload) {
+            setModalMessage('Opslaglocaties ontbreken in deze snapshot.');
+            return;
         }
+        renderLocations(payload);
     }
 
     body.addEventListener('click', event => {

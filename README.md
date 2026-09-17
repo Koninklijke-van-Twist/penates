@@ -3,8 +3,9 @@
 Overzicht van artikelen in Business Central-projectbins die aandacht nodig
 hebben: restvoorraad die geen actief werkorder meer nodig heeft, voorraad
 onder de minimumvoorraad, of te weinig voor openstaande (nog niet gepickte)
-werkorderbehoefte. Restvoorraad die precies de minimumvoorraad dekt blijft
-buiten het overzicht.
+werkorderbehoefte. Ook voorraad bij een project met status `04 FINISHED` en
+binvoorraad die lager is dan de gepickte hoeveelheid wordt gemarkeerd.
+Restvoorraad die precies de minimumvoorraad dekt blijft buiten het overzicht.
 
 ## Werking
 
