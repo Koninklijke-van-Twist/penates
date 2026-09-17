@@ -41,6 +41,27 @@ function penates_date_time(string $value): string
     }
 }
 
+/**
+ * Korte samenvatting van de opslaglocaties uit de snapshot, in dezelfde
+ * volgorde als de modal: "97x ONBEKEND, 3x A-01".
+ */
+function penates_warehouse_summary(array $row): string
+{
+    $warehouse = is_array($row['warehouse'] ?? null) ? $row['warehouse'] : [];
+    $locations = is_array($warehouse['locations'] ?? null) ? $warehouse['locations'] : [];
+
+    $labels = [];
+    foreach ($locations as $location) {
+        $bin = trim((string) ($location['bin'] ?? ''));
+        if ($bin === '') {
+            continue;
+        }
+        $labels[] = penates_number((float) ($location['quantity'] ?? 0)) . 'x ' . $bin;
+    }
+
+    return implode(', ', $labels);
+}
+
 function penates_workorder_label(array $workorder): string
 {
     $number = trim((string) ($workorder['no'] ?? ''));
@@ -371,6 +392,7 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
                                 <?= penates_h($row['item_no'] ?? '') ?>
                             </button>
                             <?php if (($row['variant_code'] ?? '') !== ''): ?><div class="muted">Variant <?= penates_h($row['variant_code']) ?></div><?php endif; ?>
+                            <div class="muted" data-role="warehouse"><?= penates_h(penates_warehouse_summary($row)) ?></div>
                         </td>
                         <td><?= penates_h($row['description'] ?? '') ?><div class="muted"><?= penates_h($row['description_2'] ?? '') ?></div></td>
                         <td class="nowrap"><span data-role="quantity"><?= penates_h(penates_number((float) ($row['quantity'] ?? 0))) ?></span> <?= penates_h($row['unit'] ?? '') ?></td>
@@ -457,6 +479,15 @@ $rows = array_slice($filteredRows, ($page - 1) * $perPage, $perPage);
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2
             });
+        }
+
+        const warehouse = element.querySelector('[data-role="warehouse"]');
+        if (warehouse) {
+            const locations = (data.warehouse && data.warehouse.locations) || [];
+            warehouse.textContent = locations
+                .filter(item => item.bin)
+                .map(item => formatQty(item.quantity) + 'x ' + item.bin)
+                .join(', ');
         }
 
         const workorders = element.querySelector('[data-role="workorders"]');
