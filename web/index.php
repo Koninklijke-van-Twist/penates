@@ -176,6 +176,12 @@ foreach ($rows as $row) {
         .hero p { margin: 0; max-width: 760px; color: rgba(255,255,255,.86); }
         .snapshot { flex: 0 0 auto; text-align: right; font-size: .83rem; color: rgba(255,255,255,.8); }
         .snapshot strong { display: block; margin-top: 4px; color: #fff; font-size: .98rem; }
+        .export {
+            display: inline-flex; align-items: center; gap: 7px; margin-top: 10px;
+            padding: 8px 14px; border: 1px solid rgba(255,255,255,.55); border-radius: 10px;
+            color: #fff; text-decoration: none; font-size: .86rem; font-weight: 700;
+        }
+        .export:hover, .export:focus { background: rgba(255,255,255,.16); }
         .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
         .stat { padding: 16px 18px; border: 1px solid var(--kvt-line); border-radius: 14px; background: #fff; }
         .stat-label { color: var(--kvt-muted); font-size: .82rem; }
@@ -294,6 +300,43 @@ foreach ($rows as $row) {
             .hero-logo { padding: 9px 12px; }
             .hero-logo img { height: 28px; }
         }
+        @media print {
+            @page { size: A4 landscape; margin: 10mm; }
+            body { background: #fff; color: #000; font-size: 8pt; }
+            .page { width: 100%; padding: 0; }
+            .hero {
+                display: block; margin-bottom: 6mm; padding: 0; border-radius: 0;
+                color: #000; background: none; box-shadow: none;
+            }
+            .hero-logo, .hero p, .toolbar, .pagination, .empty,
+            .check-cell, .modal, .toast, .export { display: none; }
+            h1 { margin: 0; font-size: 14pt; }
+            .snapshot { text-align: left; color: #000; font-size: 8pt; }
+            .snapshot strong { display: inline; margin: 0; font-size: 8pt; }
+            .stats { display: flex; gap: 8mm; margin-bottom: 4mm; }
+            .stat { padding: 0; border: 0; border-radius: 0; }
+            .stat-value { display: inline; margin: 0; font-size: 9pt; color: #000; }
+            .panel { border: 0; border-radius: 0; }
+            .table-wrap { overflow: visible; min-height: 0; }
+            table { font-size: 7.5pt; }
+            thead { display: table-header-group; }
+            tr { break-inside: avoid; }
+            th {
+                position: static; padding: 3px 4px; border-bottom: 1px solid #000;
+                background: none; color: #000; white-space: normal;
+            }
+            th a::after, th.is-asc a::after, th.is-desc a::after { content: ""; }
+            td { padding: 3px 4px; border-bottom: 1px solid #bbb; }
+            .nowrap { white-space: normal; }
+            .reason-list, .workorders { display: block; max-width: none; }
+            .badge {
+                display: inline; padding: 0; border: 0; border-radius: 0;
+                background: none; color: #000; font-size: 7.5pt;
+            }
+            .badge + .badge::before { content: " · "; }
+            .item-link { color: #000; text-decoration: none; font-weight: 700; }
+            .muted { color: #333; font-size: 7pt; }
+        }
     </style>
 </head>
 <body>
@@ -311,6 +354,7 @@ foreach ($rows as $row) {
         <div class="snapshot">
             Laatste nachtelijke controle
             <strong><?= penates_h(penates_date_time((string) ($snapshot['generated_at'] ?? ''))) ?></strong>
+            <a class="export" href="export.php">Exporteer naar Excel</a>
         </div>
     </header>
 
