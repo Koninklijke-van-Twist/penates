@@ -42,22 +42,8 @@ function penates_date_time(string $value): string
 }
 
 /**
- * Stabiele hue 0–359 uit de locatienaam (zelfde hash als in de pagina-JS).
- */
-function penates_location_hue(string $name): int
-{
-    $hash = 0;
-    $length = strlen($name);
-    for ($i = 0; $i < $length; $i++) {
-        $hash = ($hash * 31 + ord($name[$i])) % 2147483647;
-    }
-
-    return $hash % 360;
-}
-
-/**
  * Korte samenvatting van de opslaglocaties uit de snapshot, in dezelfde
- * volgorde als de modal: "97x [ONBEKEND], 3x [A-01]" met locatiebadges.
+ * volgorde als de modal: "3x [5-14-C-1], 3x [6-14-B-6]" met locatiebadges.
  */
 function penates_warehouse_summary_html(array $row): string
 {
@@ -71,10 +57,11 @@ function penates_warehouse_summary_html(array $row): string
             continue;
         }
         $hue = penates_location_hue($bin);
-        $labels[] = penates_h(penates_number((float) ($location['quantity'] ?? 0)))
+        $labels[] = '<span class="warehouse-item">'
+            . penates_h(penates_number((float) ($location['quantity'] ?? 0)))
             . 'x <span class="badge location" style="--location-hue: ' . $hue . '">'
             . penates_h($bin)
-            . '</span>';
+            . '</span></span>';
     }
 
     return implode(', ', $labels);
@@ -250,11 +237,13 @@ foreach ($rows as $row) {
         .reason { background: #fff2cc; color: #684900; border: 1px solid #f2d47b; }
         .workorder { background: #eaf4ff; color: #174f82; border: 1px solid #c7e0f8; }
         .warehouse-summary { line-height: 1.85; }
+        .warehouse-item { white-space: nowrap; }
         .warehouse-summary .badge { vertical-align: middle; }
+        /* S/L vast op werkorder-gevoel (#eaf4ff / #174f82 / #c7e0f8); alleen hue varieert. */
         .location {
-            background: hsl(var(--location-hue), 85%, 94%);
+            background: hsl(var(--location-hue), 100%, 96%);
             color: hsl(var(--location-hue), 70%, 30%);
-            border: 1px solid hsl(var(--location-hue), 60%, 82%);
+            border: 1px solid hsl(var(--location-hue), 78%, 88%);
         }
         .check-cell { width: 54px; text-align: right; }
         .recheck {
@@ -581,8 +570,11 @@ foreach ($rows as $row) {
                 if (index > 0) {
                     nodes.push(document.createTextNode(', '));
                 }
-                nodes.push(document.createTextNode(formatQty(item.quantity) + 'x '));
-                nodes.push(locationBadge(String(item.bin).trim()));
+                const wrap = document.createElement('span');
+                wrap.className = 'warehouse-item';
+                wrap.append(document.createTextNode(formatQty(item.quantity) + 'x '));
+                wrap.append(locationBadge(String(item.bin).trim()));
+                nodes.push(wrap);
             });
             warehouse.replaceChildren(...nodes);
         }

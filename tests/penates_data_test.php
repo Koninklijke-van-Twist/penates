@@ -262,4 +262,10 @@ $cached = penates_cached_warehouse_payload([
 test_assert($cached['cached'] === true, 'Snapshotregel moet als cache worden herkend');
 test_assert(count($cached['locations']) === 1, 'Cache-payload mist opslaglocaties');
 
+test_assert(penates_location_hue('5-14-C-1') === penates_location_hue('5-14-C-1'), 'Zelfde locatienaam moet dezelfde hue geven');
+test_assert(penates_location_hue('5-14-C-1') !== penates_location_hue('6-14-B-6'), 'Andere locatienaam moet een andere hue geven');
+test_assert(penates_location_hue('A') === 65, 'Hue-hash voor A moet 65 zijn');
+$hue = penates_location_hue('5-14-C-1');
+test_assert($hue >= 0 && $hue < 360, 'Hue moet in 0–359 liggen');
+
 echo "OK penates_data_test\n";

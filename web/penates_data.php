@@ -1013,6 +1013,21 @@ function penates_attach_warehouse_locations(string $company, array $rows): array
     return $rows;
 }
 
+/**
+ * Stabiele hue (0–359) uit een locatienaam. Saturatie en lightness blijven
+ * vast in de UI (werkorder-badgegevoel); alleen deze hue hangt van de naam-hash af.
+ */
+function penates_location_hue(string $name): int
+{
+    $hash = 0;
+    $length = strlen($name);
+    for ($i = 0; $i < $length; $i++) {
+        $hash = ($hash * 31 + ord($name[$i])) % 2147483647;
+    }
+
+    return $hash % 360;
+}
+
 function penates_cached_warehouse_payload(array $row): array
 {
     $warehouse = is_array($row['warehouse'] ?? null) ? $row['warehouse'] : ['locations' => [], 'total_quantity' => 0.0, 'total_value' => 0.0];
