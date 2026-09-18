@@ -42,10 +42,24 @@ function penates_date_time(string $value): string
 }
 
 /**
- * Korte samenvatting van de opslaglocaties uit de snapshot, in dezelfde
- * volgorde als de modal: "97x ONBEKEND, 3x A-01".
+ * Stabiele hue 0–359 uit de locatienaam (zelfde hash als in de pagina-JS).
  */
-function penates_warehouse_summary(array $row): string
+function penates_location_hue(string $name): int
+{
+    $hash = 0;
+    $length = strlen($name);
+    for ($i = 0; $i < $length; $i++) {
+        $hash = ($hash * 31 + ord($name[$i])) % 2147483647;
+    }
+
+    return $hash % 360;
+}
+
+/**
+ * Korte samenvatting van de opslaglocaties uit de snapshot, in dezelfde
+ * volgorde als de modal: "97x [ONBEKEND], 3x [A-01]" met locatiebadges.
+ */
+function penates_warehouse_summary_html(array $row): string
 {
     $warehouse = is_array($row['warehouse'] ?? null) ? $row['warehouse'] : [];
     $locations = is_array($warehouse['locations'] ?? null) ? $warehouse['locations'] : [];
@@ -56,7 +70,11 @@ function penates_warehouse_summary(array $row): string
         if ($bin === '') {
             continue;
         }
-        $labels[] = penates_number((float) ($location['quantity'] ?? 0)) . 'x ' . $bin;
+        $hue = penates_location_hue($bin);
+        $labels[] = penates_h(penates_number((float) ($location['quantity'] ?? 0)))
+            . 'x <span class="badge location" style="--location-hue: ' . $hue . '">'
+            . penates_h($bin)
+            . '</span>';
     }
 
     return implode(', ', $labels);
@@ -231,6 +249,13 @@ foreach ($rows as $row) {
         .badge { display: inline-flex; padding: 4px 7px; border-radius: 999px; line-height: 1.2; font-size: .75rem; }
         .reason { background: #fff2cc; color: #684900; border: 1px solid #f2d47b; }
         .workorder { background: #eaf4ff; color: #174f82; border: 1px solid #c7e0f8; }
+        .warehouse-summary { line-height: 1.85; }
+        .warehouse-summary .badge { vertical-align: middle; }
+        .location {
+            background: hsl(var(--location-hue), 85%, 94%);
+            color: hsl(var(--location-hue), 70%, 30%);
+            border: 1px solid hsl(var(--location-hue), 60%, 82%);
+        }
         .check-cell { width: 54px; text-align: right; }
         .recheck {
             opacity: 0; transform: translateX(5px); pointer-events: none;
@@ -443,7 +468,7 @@ foreach ($rows as $row) {
                                 <?= penates_h($row['item_no'] ?? '') ?>
                             </button>
                             <?php if (($row['variant_code'] ?? '') !== ''): ?><div class="muted">Variant <?= penates_h($row['variant_code']) ?></div><?php endif; ?>
-                            <div class="muted" data-role="warehouse"><?= penates_h(penates_warehouse_summary($row)) ?></div>
+                            <div class="muted warehouse-summary" data-role="warehouse"><?= penates_warehouse_summary_html($row) ?></div>
                         </td>
                         <td><?= penates_h($row['description'] ?? '') ?><div class="muted"><?= penates_h($row['description_2'] ?? '') ?></div></td>
                         <td class="nowrap"><span data-role="quantity"><?= penates_h(penates_number((float) ($row['quantity'] ?? 0))) ?></span> <?= penates_h($row['unit'] ?? '') ?></td>
@@ -512,6 +537,21 @@ foreach ($rows as $row) {
         return element;
     }
 
+    function locationHue(name) {
+        const bytes = new TextEncoder().encode(String(name));
+        let hash = 0;
+        for (const byte of bytes) {
+            hash = (hash * 31 + byte) % 2147483647;
+        }
+        return hash % 360;
+    }
+
+    function locationBadge(name) {
+        const element = badge(name, 'location');
+        element.style.setProperty('--location-hue', String(locationHue(name)));
+        return element;
+    }
+
     function workorderLabel(workorder) {
         const number = String(workorder.no || '').trim();
         const status = String(workorder.status || '').trim();
@@ -535,11 +575,16 @@ foreach ($rows as $row) {
 
         const warehouse = element.querySelector('[data-role="warehouse"]');
         if (warehouse) {
-            const locations = (data.warehouse && data.warehouse.locations) || [];
-            warehouse.textContent = locations
-                .filter(item => item.bin)
-                .map(item => formatQty(item.quantity) + 'x ' + item.bin)
-                .join(', ');
+            const locations = ((data.warehouse && data.warehouse.locations) || []).filter(item => item.bin);
+            const nodes = [];
+            locations.forEach((item, index) => {
+                if (index > 0) {
+                    nodes.push(document.createTextNode(', '));
+                }
+                nodes.push(document.createTextNode(formatQty(item.quantity) + 'x '));
+                nodes.push(locationBadge(String(item.bin).trim()));
+            });
+            warehouse.replaceChildren(...nodes);
         }
 
         const workorders = element.querySelector('[data-role="workorders"]');
