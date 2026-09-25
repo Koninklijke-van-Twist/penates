@@ -34,7 +34,7 @@ $mimirApi  = 'mimir_…';
 $mimirBase = 'https://sleutels.kvt.nl/mimir/api';
 ```
 
-With `$mimirApi` set, `$auth_list`, `$environment`, `$baseUrl` and `$auth` are unused for Business Central — OData fetches (nightly snapshot build and live recheck) and company discovery go through Mímir (`max_age` from `PENATES_ODATA_TTL`). Without `$mimirApi` the existing direct-BC path remains unchanged. Penates has no separate company userprefs beyond the on-page company filter (snapshot-driven).
+With `$mimirApi` set, `$auth_list`, `$environment`, `$baseUrl` and `$auth` are unused for Business Central — OData fetches (nightly snapshot build and live recheck) and company discovery go through Mímir (`max_age` from `PENATES_NIGHTLY_MAX_AGE` = 14400 on nightly builds, `PENATES_ODATA_TTL` = 86400 on live recheck). Without `$mimirApi` the existing direct-BC path remains unchanged. Penates has no separate company userprefs beyond the on-page company filter (snapshot-driven).
 
 Pure classificatietests:
 

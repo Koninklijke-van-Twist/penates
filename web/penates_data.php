@@ -7,8 +7,10 @@ const PENATES_SNAPSHOT_VERSION = 1;
 const PENATES_SNAPSHOT_FILE = __DIR__ . '/data/penates_snapshot.json';
 const PENATES_SNAPSHOT_LOCK = __DIR__ . '/data/penates_snapshot.lock';
 const PENATES_ODATA_BATCH_SIZE = 12;
-/** Mímir max_age / discovery TTL when $mimirApi is set (nightly + live recheck). */
+/** Mímir max_age for UI / on-demand / snapshot recheck when $mimirApi is set. */
 const PENATES_ODATA_TTL = 86400;
+/** Mímir max_age for nightly snapshot builds (4h — cache sharing, nightly still refreshes). */
+const PENATES_NIGHTLY_MAX_AGE = 14400;
 
 const PENATES_BIN_SELECT = 'Location_Code,Code,Description,Empty,KVT_Job_Bin';
 const PENATES_CONTENT_SELECT = 'Location_Code,Bin_Code,Item_No,Variant_Code,Unit_of_Measure_Code,Quantity_Base,Pick_Quantity_Base,CalcQtyAvailToTakeUOM';
@@ -118,14 +120,14 @@ function penates_chunks(array $values): array
     return array_chunk(array_values(array_unique(array_filter(array_map('strval', $values)))), PENATES_ODATA_BATCH_SIZE);
 }
 
-function penates_fetch_project_bins(string $company): array
+function penates_fetch_project_bins(string $company, int $ttl = PENATES_ODATA_TTL): array
 {
     try {
         return penates_fetch_rows_live($company, 'Bins', [
             '$select' => PENATES_BIN_SELECT,
             '$filter' => 'KVT_Job_Bin eq true and Empty eq false',
             '$orderby' => 'Location_Code asc,Code asc',
-        ]);
+        ], $ttl);
     } catch (Throwable $error) {
         // Niet ieder actief environment heeft de KVT-magazijnextensie.
         // Zonder deze marker kunnen bins niet betrouwbaar als projectbin
@@ -137,7 +139,7 @@ function penates_fetch_project_bins(string $company): array
     }
 }
 
-function penates_fetch_bin_contents(string $company, array $bins): array
+function penates_fetch_bin_contents(string $company, array $bins, int $ttl = PENATES_ODATA_TTL): array
 {
     $codesByLocation = [];
     foreach ($bins as $bin) {
@@ -156,42 +158,42 @@ function penates_fetch_bin_contents(string $company, array $bins): array
                 '$select' => PENATES_CONTENT_SELECT,
                 '$filter' => penates_odata_equals('Location_Code', $location)
                     . ' and Quantity_Base gt 0 and (' . $binFilter . ')',
-            ]));
+            ], $ttl));
         }
     }
 
     return $rows;
 }
 
-function penates_fetch_workorders_for_bins(string $company, array $binCodes): array
+function penates_fetch_workorders_for_bins(string $company, array $binCodes, int $ttl = PENATES_ODATA_TTL): array
 {
     $rows = [];
     foreach (penates_chunks($binCodes) as $chunk) {
         $rows = array_merge($rows, penates_fetch_rows_live($company, 'Werkorders', [
             '$select' => PENATES_WORKORDER_SELECT,
             '$filter' => penates_odata_or('Job_No', $chunk),
-        ]));
+        ], $ttl));
         $rows = array_merge($rows, penates_fetch_rows_live($company, 'Werkorders', [
             '$select' => PENATES_WORKORDER_SELECT,
             '$filter' => penates_odata_or('No', $chunk),
-        ]));
+        ], $ttl));
     }
     return penates_unique_rows($rows, static fn(array $row): string => (string) ($row['No'] ?? ''));
 }
 
-function penates_fetch_projects_for_bins(string $company, array $binCodes): array
+function penates_fetch_projects_for_bins(string $company, array $binCodes, int $ttl = PENATES_ODATA_TTL): array
 {
     $rows = [];
     foreach (penates_chunks($binCodes) as $chunk) {
         $rows = array_merge($rows, penates_fetch_rows_live($company, 'AppProjecten', [
             '$select' => PENATES_PROJECT_SELECT,
             '$filter' => penates_odata_or('No', $chunk),
-        ]));
+        ], $ttl));
     }
     return penates_unique_rows($rows, static fn(array $row): string => (string) ($row['No'] ?? ''));
 }
 
-function penates_fetch_lines_for_context(string $company, array $binCodes, array $workorders): array
+function penates_fetch_lines_for_context(string $company, array $binCodes, array $workorders, int $ttl = PENATES_ODATA_TTL): array
 {
     $jobNumbers = $binCodes;
 
@@ -204,7 +206,7 @@ function penates_fetch_lines_for_context(string $company, array $binCodes, array
         $rows = array_merge($rows, penates_fetch_rows_live($company, 'WerkordersLines', [
             '$select' => PENATES_LINE_SELECT,
             '$filter' => "Type eq 'Artikel' and (" . penates_odata_or('Job_No', $chunk) . ')',
-        ]));
+        ], $ttl));
     }
 
     return penates_unique_rows($rows, static function (array $row): string {
@@ -217,7 +219,7 @@ function penates_fetch_lines_for_context(string $company, array $binCodes, array
     });
 }
 
-function penates_fetch_items(string $company, array $itemNumbers): array
+function penates_fetch_items(string $company, array $itemNumbers, int $ttl = PENATES_ODATA_TTL): array
 {
     $rows = [];
     try {
@@ -225,7 +227,7 @@ function penates_fetch_items(string $company, array $itemNumbers): array
             $rows = array_merge($rows, penates_fetch_rows_live($company, 'AppItemCard', [
                 '$select' => PENATES_ITEM_SELECT,
                 '$filter' => penates_odata_or('No', $chunk),
-            ]));
+            ], $ttl));
         }
     } catch (Throwable $error) {
         if (!str_contains($error->getMessage(), "property named '")) {
@@ -237,7 +239,7 @@ function penates_fetch_items(string $company, array $itemNumbers): array
             $rows = array_merge($rows, penates_fetch_rows_live($company, 'AppItems', [
                 '$select' => $fallbackSelect,
                 '$filter' => penates_odata_or('No', $chunk),
-            ]));
+            ], $ttl));
         }
     }
     return penates_unique_rows($rows, static fn(array $row): string => (string) ($row['No'] ?? ''));
@@ -594,19 +596,19 @@ function penates_row_id(array $row): string
     ]));
 }
 
-function penates_build_company_rows(string $company): array
+function penates_build_company_rows(string $company, int $ttl = PENATES_ODATA_TTL): array
 {
-    $bins = penates_fetch_project_bins($company);
+    $bins = penates_fetch_project_bins($company, $ttl);
     if ($bins === []) {
         return [];
     }
 
-    $contents = penates_fetch_bin_contents($company, $bins);
+    $contents = penates_fetch_bin_contents($company, $bins, $ttl);
     $binCodes = array_values(array_unique(array_column($bins, 'Code')));
-    $projects = penates_fetch_projects_for_bins($company, $binCodes);
-    $workorders = penates_fetch_workorders_for_bins($company, $binCodes);
-    $lines = penates_fetch_lines_for_context($company, $binCodes, $workorders);
-    $items = penates_fetch_items($company, array_column($contents, 'Item_No'));
+    $projects = penates_fetch_projects_for_bins($company, $binCodes, $ttl);
+    $workorders = penates_fetch_workorders_for_bins($company, $binCodes, $ttl);
+    $lines = penates_fetch_lines_for_context($company, $binCodes, $workorders, $ttl);
+    $items = penates_fetch_items($company, array_column($contents, 'Item_No'), $ttl);
 
     $binsByKey = [];
     foreach ($bins as $bin) {
@@ -782,7 +784,7 @@ function penates_run_nightly(): array
     foreach ($companies as $company) {
         $startedAt = hrtime(true);
         try {
-            $companyRows = penates_build_company_rows($company);
+            $companyRows = penates_build_company_rows($company, PENATES_NIGHTLY_MAX_AGE);
             $rows = array_merge($rows, $companyRows);
             $companyStats[] = [
                 'company' => $company,
