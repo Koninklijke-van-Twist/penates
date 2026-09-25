@@ -7,6 +7,8 @@ const PENATES_SNAPSHOT_VERSION = 1;
 const PENATES_SNAPSHOT_FILE = __DIR__ . '/data/penates_snapshot.json';
 const PENATES_SNAPSHOT_LOCK = __DIR__ . '/data/penates_snapshot.lock';
 const PENATES_ODATA_BATCH_SIZE = 12;
+/** Mímir max_age / discovery TTL when $mimirApi is set (nightly + live recheck). */
+const PENATES_ODATA_TTL = 86400;
 
 const PENATES_BIN_SELECT = 'Location_Code,Code,Description,Empty,KVT_Job_Bin';
 const PENATES_CONTENT_SELECT = 'Location_Code,Bin_Code,Item_No,Variant_Code,Unit_of_Measure_Code,Quantity_Base,Pick_Quantity_Base,CalcQtyAvailToTakeUOM';
@@ -81,8 +83,13 @@ function penates_fetch_url_live(string $url, array $auth): array
     return $rows;
 }
 
-function penates_fetch_rows_live(string $company, string $entitySet, array $query = []): array
+function penates_fetch_rows_live(string $company, string $entitySet, array $query = [], int $ttl = PENATES_ODATA_TTL): array
 {
+    // Mímir-modus: geen environment / auth / baseUrl nodig.
+    if (function_exists('odata_mimir_enabled') && odata_mimir_enabled()) {
+        return odata_mimir_query($company, $entitySet, $query, $ttl === 0 ? 3600 : $ttl);
+    }
+
     global $baseUrl;
 
     $environment = auth_get_environment_for_company($company);
@@ -744,8 +751,25 @@ function penates_write_snapshot(array $snapshot): void
 
 function penates_discover_companies(): array
 {
-    $result = auth_discover_companies_across_active_environments();
-    return is_array($result['companies'] ?? null) ? $result['companies'] : [];
+    try {
+        if (function_exists('odata_mimir_enabled') && odata_mimir_enabled()) {
+            $companies = odata_mimir_list_companies(null);
+            // Vul demeter_* globals / map voor eventuele callers.
+            try {
+                auth_discover_companies_across_active_environments(PENATES_ODATA_TTL);
+            } catch (Throwable $ignored) {
+            }
+            if ($companies !== []) {
+                return $companies;
+            }
+        }
+
+        $result = auth_discover_companies_across_active_environments();
+        $companies = is_array($result['companies'] ?? null) ? $result['companies'] : [];
+        return $companies;
+    } catch (Throwable $ignored) {
+        return [];
+    }
 }
 
 function penates_run_nightly(): array

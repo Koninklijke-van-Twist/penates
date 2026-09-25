@@ -23,6 +23,19 @@ aanroepen. Lokaal kan hetzelfde met:
 php web/nightly.php
 ```
 
+
+## Mímir (optional)
+
+Set in `web/auth.php` (not in git):
+
+```php
+$mimirApi  = 'mimir_…';
+// optional:
+$mimirBase = 'https://sleutels.kvt.nl/mimir/api';
+```
+
+With `$mimirApi` set, `$auth_list`, `$environment`, `$baseUrl` and `$auth` are unused for Business Central — OData fetches (nightly snapshot build and live recheck) and company discovery go through Mímir (`max_age` from `PENATES_ODATA_TTL`). Without `$mimirApi` the existing direct-BC path remains unchanged. Penates has no separate company userprefs beyond the on-page company filter (snapshot-driven).
+
 Pure classificatietests:
 
 ```sh
