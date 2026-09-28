@@ -409,6 +409,11 @@ function odata_bc_auth_for_company_env(?string $env, array $passed): ?array
         if ($named !== null) {
             return $named;
         }
+        // Alleen een onbekend bedrijf of de primaire environment mag $auth gebruiken.
+        $primary = odata_bc_environment();
+        if ($primary === null || strcasecmp(trim($env), $primary) !== 0) {
+            return null;
+        }
     }
     return odata_bc_auth_for_fallback($passed);
 }
@@ -1011,7 +1016,14 @@ function odata_get_all(string $url, array $auth, $ttlSeconds = 300): array
             static function () use ($url, $auth, $ttlSeconds): array {
                 $directUrl = odata_bc_url_from_odata_url($url);
                 $env = odata_bc_environment_for_request_url($url);
-                $directAuth = odata_bc_auth_for_company_env($env, $auth) ?? $auth;
+                $directAuth = odata_bc_auth_for_company_env($env, $auth);
+                if ($directAuth === null) {
+                    $previous = odata_mimir_last_error();
+                    if ($previous instanceof Throwable) {
+                        throw $previous;
+                    }
+                    throw new Exception('Mímir mislukt.');
+                }
                 return odata_get_all_direct($directUrl, $directAuth, $ttlSeconds);
             }
         );

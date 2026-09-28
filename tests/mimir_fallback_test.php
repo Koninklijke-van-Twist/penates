@@ -281,6 +281,59 @@ if (fallback_count() !== $loggedBeforeCaller || count($calls) !== $callsBeforeCa
     fail('een fout uit de caller mag geen fallback starten');
 }
 
+$GLOBALS['demeter_company_environment_map']['Other Co'] = 'Absent Env';
+odata_mimir_circuit_reset();
+$callsBeforeAbsent = count($calls);
+$absentError = null;
+try {
+    odata_mimir_query('Other Co', 'AppResource', ['$select' => 'No'], 60);
+    fail('een environment zonder eigen credentials mag niet met andermans auth bevraagd worden');
+} catch (Throwable $exception) {
+    $absentError = $exception;
+}
+if (count($calls) !== $callsBeforeAbsent) {
+    fail('query naar een environment zonder credentials riep toch BC aan: ' . json_encode(array_slice($calls, $callsBeforeAbsent)));
+}
+if (!$absentError instanceof Throwable || strpos($absentError->getMessage(), 'Mímir') === false) {
+    fail('environment zonder credentials moet de Mímir-fout teruggeven: ' . ($absentError instanceof Throwable ? $absentError->getMessage() : 'geen'));
+}
+
+odata_mimir_circuit_reset();
+$callsBeforeAbsentGet = count($calls);
+$absentGetError = null;
+try {
+    odata_get_all(
+        "https://mimir.invalid/Absent%20Env/ODataV4/Company('Other%20Co')/AppWerkorders?\$select=No",
+        $auth,
+        30
+    );
+    fail('odata_get_all mag de meegegeven auth niet voor een andere environment gebruiken');
+} catch (Throwable $exception) {
+    $absentGetError = $exception;
+}
+if (count($calls) !== $callsBeforeAbsentGet) {
+    fail('odata_get_all gebruikte fallback-credentials voor Absent Env: ' . json_encode(array_slice($calls, $callsBeforeAbsentGet)));
+}
+if (!$absentGetError instanceof Throwable || strpos($absentGetError->getMessage(), 'Mímir') === false) {
+    fail('odata_get_all zonder environment-credentials moet de Mímir-fout teruggeven');
+}
+
+odata_mimir_circuit_reset();
+$callsBeforeAbsentList = count($calls);
+$absentListError = null;
+try {
+    odata_mimir_list_companies('Absent Env');
+    fail('company-lijst voor een environment zonder credentials moet de Mímir-fout teruggeven');
+} catch (Throwable $exception) {
+    $absentListError = $exception;
+}
+if (count($calls) !== $callsBeforeAbsentList) {
+    fail('company-lijst gebruikte credentials van een andere environment: ' . json_encode(array_slice($calls, $callsBeforeAbsentList)));
+}
+if (!$absentListError instanceof Throwable || strpos($absentListError->getMessage(), 'Mímir') === false) {
+    fail('company-lijst zonder environment-credentials gaf niet de Mímir-fout terug');
+}
+
 $environment = 'mimir';
 $cacheKey = build_cache_key(
     "https://bc.example:7148/Sandbox%20Two/ODataV4/Company('Hunter%20van%20Twist')/Bins",
