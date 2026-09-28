@@ -87,16 +87,31 @@ function penates_fetch_url_live(string $url, array $auth): array
 
 function penates_fetch_rows_live(string $company, string $entitySet, array $query = [], int $ttl = PENATES_ODATA_TTL): array
 {
-    // Mímir-modus: geen environment / auth / baseUrl nodig.
-    if (function_exists('odata_mimir_enabled') && odata_mimir_enabled()) {
-        return odata_mimir_query($company, $entitySet, $query, $ttl === 0 ? 3600 : $ttl);
+    // Mímir eerst. Faalt die aanroep, dan de pre-Mímir route (baseUrl + environment + auth).
+    if (function_exists('odata_mimir_enabled') && odata_mimir_enabled() && function_exists('odata_mimir_or_direct')) {
+        return odata_mimir_or_direct(
+            static function () use ($company, $entitySet, $query, $ttl): array {
+                return odata_mimir_query_impl($company, $entitySet, $query, $ttl === 0 ? 3600 : $ttl);
+            },
+            static function () use ($company, $entitySet, $query): array {
+                return penates_fetch_rows_direct($company, $entitySet, $query);
+            }
+        );
     }
 
+    return penates_fetch_rows_direct($company, $entitySet, $query);
+}
+
+/**
+ * Pre-Mímir ophaalroute: company-URL op $baseUrl met auth uit auth.php.
+ */
+function penates_fetch_rows_direct(string $company, string $entitySet, array $query): array
+{
     global $baseUrl;
 
     $environment = auth_get_environment_for_company($company);
     $auth = auth_get_auth_for_environment($environment);
-    $url = penates_company_entity_url($baseUrl, $environment, $company, $entitySet, $query);
+    $url = penates_company_entity_url((string) $baseUrl, $environment, $company, $entitySet, $query);
 
     return penates_fetch_url_live($url, $auth);
 }
@@ -753,24 +768,39 @@ function penates_write_snapshot(array $snapshot): void
 
 function penates_discover_companies(): array
 {
+    $mimirNames = [];
     try {
-        if (function_exists('odata_mimir_enabled') && odata_mimir_enabled()) {
-            $companies = odata_mimir_list_companies(null);
-            // Vul demeter_* globals / map voor eventuele callers.
-            try {
-                auth_discover_companies_across_active_environments(PENATES_ODATA_TTL);
-            } catch (Throwable $ignored) {
-            }
-            if ($companies !== []) {
-                return $companies;
+        $circuitOpen = static function (): bool {
+            return function_exists('odata_mimir_circuit_open') && odata_mimir_circuit_open();
+        };
+        if (function_exists('odata_mimir_enabled') && odata_mimir_enabled() && !$circuitOpen()) {
+            $mimirNames = odata_mimir_list_companies(null);
+            if (!$circuitOpen() && $mimirNames !== []) {
+                // Vul demeter_* globals / map voor eventuele callers.
+                try {
+                    auth_discover_companies_across_active_environments(PENATES_ODATA_TTL);
+                } catch (Throwable $ignored) {
+                }
+                return $mimirNames;
             }
         }
 
         $result = auth_discover_companies_across_active_environments();
         $companies = is_array($result['companies'] ?? null) ? $result['companies'] : [];
-        return $companies;
-    } catch (Throwable $ignored) {
-        return [];
+        if ($companies !== []) {
+            return $companies;
+        }
+        return $mimirNames;
+    } catch (Throwable $error) {
+        if (function_exists('odata_mimir_circuit_open') && odata_mimir_circuit_open()
+            && function_exists('odata_bc_credentials_configured') && !odata_bc_credentials_configured()) {
+            $previous = function_exists('odata_mimir_last_error') ? odata_mimir_last_error() : null;
+            if ($previous instanceof Throwable) {
+                throw $previous;
+            }
+            throw $error;
+        }
+        return $mimirNames;
     }
 }
 
