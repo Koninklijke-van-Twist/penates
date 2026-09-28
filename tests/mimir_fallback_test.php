@@ -448,4 +448,164 @@ if (strpos($log, 'loaded-secret') !== false || strpos($log, 'sandbox-secret') !=
     fail('log bevat een geheim');
 }
 
+odata_mimir_circuit_reset();
+$mimirApi = 'mimir_test_key_should_not_leak';
+$mimirBase = 'http://127.0.0.1:9';
+$baseUrl = 'https://bc.example:7148/';
+$environment = 'Production';
+$auth = ['mode' => 'basic', 'user' => 'only-auth-user', 'pass' => 'only-auth-secret'];
+unset($auth_list);
+unset($GLOBALS['penates_bc_auth_original']);
+$GLOBALS['demeter_company_environment_map'] = ['KVT Gas' => 'Sandbox'];
+
+$beforeOnlyAuth = count($calls);
+$onlyQuery = odata_mimir_query('KVT Gas', 'AppResource', ['$select' => 'No'], 60);
+$onlyQueryCall = $calls[$beforeOnlyAuth] ?? null;
+$expectedOnlyQuery = "https://bc.example:7148/Sandbox/ODataV4/Company('KVT%20Gas')/AppResource?";
+if (($onlyQuery[0]['No'] ?? '') !== 'WO-1' || !is_array($onlyQueryCall) || strpos((string) $onlyQueryCall['url'], $expectedOnlyQuery) !== 0 || ($onlyQueryCall['user'] ?? '') !== 'only-auth-user') {
+    fail('query zonder auth_list gebruikte niet $auth voor een andere environment: ' . json_encode($onlyQueryCall));
+}
+
+$beforeOnlyFetch = count($calls);
+$onlyFetch = odata_mimir_fetch_all(
+    "https://mimir.invalid/Sandbox/ODataV4/Company('KVT%20Gas')/AppWerkorders?\$select=No",
+    15
+);
+$onlyFetchCall = $calls[$beforeOnlyFetch] ?? null;
+$expectedOnlyFetch = "https://bc.example:7148/Sandbox/ODataV4/Company('KVT%20Gas')/AppWerkorders?\$select=No";
+if (($onlyFetch[0]['No'] ?? '') !== 'WO-1' || !is_array($onlyFetchCall) || ($onlyFetchCall['url'] ?? '') !== $expectedOnlyFetch || ($onlyFetchCall['user'] ?? '') !== 'only-auth-user') {
+    fail('URL-fetch zonder auth_list gebruikte niet $auth: ' . json_encode($onlyFetchCall));
+}
+
+$beforeOnlyList = count($calls);
+$onlyNames = odata_mimir_list_companies(null);
+$onlyListCall = $calls[$beforeOnlyList] ?? null;
+if ($onlyNames !== $expectedNames || !is_array($onlyListCall) || ($onlyListCall['url'] ?? '') !== 'https://bc.example:7148/Production/ODataV4/Company' || ($onlyListCall['user'] ?? '') !== 'only-auth-user') {
+    fail('companylijst zonder auth_list vroeg niet de primaire environment met $auth: ' . json_encode($onlyListCall) . ' namen=' . json_encode($onlyNames));
+}
+
+$auth_list = [];
+odata_mimir_circuit_reset();
+$beforeEmptyList = count($calls);
+$emptyQuery = odata_mimir_query('KVT Gas', 'AppResource', ['$select' => 'No'], 60);
+$emptyQueryCall = $calls[$beforeEmptyList] ?? null;
+if (($emptyQuery[0]['No'] ?? '') !== 'WO-1' || !is_array($emptyQueryCall) || strpos((string) $emptyQueryCall['url'], $expectedOnlyQuery) !== 0 || ($emptyQueryCall['user'] ?? '') !== 'only-auth-user') {
+    fail('lege auth_list moet een bekende andere environment met $auth bevragen: ' . json_encode($emptyQueryCall));
+}
+
+odata_mimir_circuit_reset();
+$baseUrl = 'https://mimir.invalid/';
+$GLOBALS['base'] = 'https://bc.example:7148/';
+unset($auth_list);
+$beforeBase = count($calls);
+$baseNames = odata_mimir_list_companies(null);
+$baseCall = $calls[$beforeBase] ?? null;
+if ($baseNames !== $expectedNames || !is_array($baseCall) || ($baseCall['url'] ?? '') !== 'https://bc.example:7148/Production/ODataV4/Company' || ($baseCall['user'] ?? '') !== 'only-auth-user') {
+    fail('companylijst moet $base gebruiken als baseUrl de Mímir-placeholder is: ' . json_encode($baseCall));
+}
+$baseUrl = 'https://bc.example:7148/';
+unset($GLOBALS['base']);
+
+odata_mimir_circuit_reset();
+unset($auth_list);
+unset($GLOBALS['demeter_company_environment_map']);
+unset($GLOBALS['demeter_companies_by_environment']);
+unset($GLOBALS['demeter_active_environments']);
+$beforeDiscoverOnly = count($calls);
+$discoveredOnly = auth_discover_companies_across_active_environments(30);
+if (($discoveredOnly['companies'] ?? null) !== ['Hunter van Twist', 'KVT Gas']) {
+    fail('discovery zonder auth_list viel niet terug op BC: ' . json_encode($discoveredOnly));
+}
+if (($discoveredOnly['map']['KVT Gas'] ?? '') !== 'Production') {
+    fail('discovery zonder auth_list zette niet de primaire environment: ' . json_encode($discoveredOnly['map'] ?? null));
+}
+$discoverOnlyCall = $calls[$beforeDiscoverOnly] ?? null;
+if (!is_array($discoverOnlyCall) || strpos((string) $discoverOnlyCall['url'], 'https://bc.example:7148/Production/ODataV4/Compan') !== 0 || ($discoverOnlyCall['user'] ?? '') !== 'only-auth-user') {
+    fail('discovery zonder auth_list gebruikte niet $auth: ' . json_encode($discoverOnlyCall));
+}
+
+$GLOBALS['demeter_company_environment_map'] = ['KVT Gas' => 'Sandbox'];
+$beforeLiveOnly = count($calls);
+$liveOnly = penates_fetch_rows_live('KVT Gas', 'Bins', ['$select' => 'Code'], 60);
+$liveOnlyCall = $calls[$beforeLiveOnly] ?? null;
+$expectedLiveOnly = "https://bc.example:7148/Sandbox/ODataV4/Company('KVT%20Gas')/Bins?";
+if (($liveOnly[0]['No'] ?? '') !== 'WO-1' || !is_array($liveOnlyCall) || strpos((string) $liveOnlyCall['url'], $expectedLiveOnly) !== 0 || ($liveOnlyCall['user'] ?? '') !== 'only-auth-user') {
+    fail('penates-fallback zonder auth_list gebruikte niet $auth: ' . json_encode($liveOnlyCall));
+}
+
+odata_mimir_circuit_reset();
+$environment = 'Production';
+$auth = ['mode' => 'basic', 'user' => 'primary-user', 'pass' => 'primary-secret'];
+$auth_list = [
+    'Sandbox' => ['mode' => 'basic', 'user' => 'sandbox-user', 'pass' => 'sandbox-secret'],
+];
+unset($GLOBALS['demeter_company_environment_map']);
+unset($GLOBALS['penates_bc_auth_original']);
+$beforeUnmapped = count($calls);
+$unmapped = odata_mimir_query('Unmapped Co', 'AppResource', ['$select' => 'No'], 60);
+$unmappedCall = $calls[$beforeUnmapped] ?? null;
+$expectedUnmapped = "https://bc.example:7148/Production/ODataV4/Company('Unmapped%20Co')/AppResource?";
+if (($unmapped[0]['No'] ?? '') !== 'WO-1' || !is_array($unmappedCall) || strpos((string) $unmappedCall['url'], $expectedUnmapped) !== 0 || ($unmappedCall['user'] ?? '') !== 'primary-user') {
+    fail('unmapped bedrijf moet via $auth van de primaire environment: ' . json_encode($unmappedCall));
+}
+
+odata_mimir_circuit_reset();
+$environment = 'Production';
+$auth = ['mode' => 'basic', 'user' => 'primary-user', 'pass' => 'primary-secret'];
+$auth_list = ['Production' => $auth];
+unset($GLOBALS['demeter_company_environment_map']);
+$beforeSandboxUrl = count($calls);
+$sandboxError = null;
+try {
+    odata_get_all(
+        "https://mimir.invalid/Sandbox/ODataV4/Company('KVT%20Gas')/AppWerkorders?\$select=No",
+        $auth,
+        30
+    );
+    fail('Sandbox-URL zonder eigen auth_list-entry mag niet naar BC');
+} catch (Throwable $exception) {
+    $sandboxError = $exception;
+}
+if (count($calls) !== $beforeSandboxUrl) {
+    fail('Sandbox-URL deed toch een BC-call: ' . json_encode(array_slice($calls, $beforeSandboxUrl)));
+}
+if (!$sandboxError instanceof Throwable || strpos($sandboxError->getMessage(), 'Mímir') === false) {
+    fail('Sandbox-URL moet de Mímir-fout teruggeven: ' . ($sandboxError instanceof Throwable ? $sandboxError->getMessage() : 'geen'));
+}
+
+odata_mimir_circuit_reset();
+$mimirApi = 'mimir_test_key_should_not_leak';
+$mimirBase = 'http://127.0.0.1:9';
+$baseUrl = 'https://bc.example:7148/';
+$environment = 'Production';
+$auth = ['mode' => 'basic', 'user' => 'preserved-user', 'pass' => 'preserved-secret'];
+unset($auth_list);
+unset($GLOBALS['penates_bc_auth_original']);
+$GLOBALS['demeter_company_environment_map'] = ['KVT Gas' => 'Sandbox'];
+$beforeCtx = count($calls);
+$ctx = auth_set_current_company_context('KVT Gas');
+if (count($calls) !== $beforeCtx) {
+    fail('company-context in Mímir-modus mag nog geen BC-call doen: ' . json_encode(array_slice($calls, $beforeCtx)));
+}
+if (($ctx['auth'] ?? null) !== [] || $auth !== []) {
+    fail('Mímir-context zonder auth_list-entry moet de globale auth leeg laten');
+}
+$beforePreserved = count($calls);
+$preservedRows = odata_mimir_query('KVT Gas', 'AppResource', ['$select' => 'No'], 60);
+$preservedCall = $calls[$beforePreserved] ?? null;
+$expectedPreserved = "https://bc.example:7148/Sandbox/ODataV4/Company('KVT%20Gas')/AppResource?";
+if (($preservedRows[0]['No'] ?? '') !== 'WO-1' || !is_array($preservedCall) || strpos((string) $preservedCall['url'], $expectedPreserved) !== 0 || ($preservedCall['user'] ?? '') !== 'preserved-user') {
+    fail('fallback na company-context moet de oorspronkelijke $auth houden: ' . json_encode($preservedCall));
+}
+if ($auth !== []) {
+    fail('fallback mag de lege Mímir-sentinel in $auth niet overschrijven');
+}
+
+$log = fallback_log();
+foreach (['only-auth-secret', 'primary-secret', 'sandbox-secret', 'preserved-secret', 'bc-secret', 'loaded-secret'] as $secret) {
+    if (strpos($log, $secret) !== false) {
+        fail('log bevat een geheim');
+    }
+}
+
 echo "OK\n";
