@@ -47,7 +47,28 @@ function auth_ensure_odata_loaded(): void
 function auth_mimir_enabled(): bool
 {
     auth_ensure_odata_loaded();
-    return function_exists('odata_mimir_enabled') && odata_mimir_enabled();
+    if (!function_exists('odata_mimir_enabled') || !odata_mimir_enabled()) {
+        return false;
+    }
+    // Na de eerste Mímir-fout in dit proces de oude BC-setup gebruiken.
+    if (function_exists('odata_mimir_circuit_open') && odata_mimir_circuit_open()) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Bij een open circuit de oorspronkelijke Mímir-fout teruggeven als BC-auth ontbreekt.
+ */
+function auth_throw_mimir_or_config(RuntimeException $fallback): void
+{
+    if (function_exists('odata_mimir_circuit_open') && odata_mimir_circuit_open()) {
+        $previous = function_exists('odata_mimir_last_error') ? odata_mimir_last_error() : null;
+        if ($previous instanceof Throwable) {
+            throw $previous;
+        }
+    }
+    throw $fallback;
 }
 
 
@@ -133,16 +154,17 @@ function auth_get_auth_for_environment(string $environment): array
         if (auth_mimir_enabled()) {
             return [];
         }
-        throw new RuntimeException('Environment ontbreekt in auth-configuratie.');
+        auth_throw_mimir_or_config(new RuntimeException('Environment ontbreekt in auth-configuratie.'));
     }
 
     $auth = $list[$environmentKey] ?? null;
     if (!is_array($auth)) {
         // Mímir-modus zonder BC-auth: leftover callers krijgen lege auth i.p.v. exception.
+        // Na een Mímir-fout (circuit open) komt de oorspronkelijke fout terug.
         if (auth_mimir_enabled()) {
             return [];
         }
-        throw new RuntimeException('Geen auth-configuratie gevonden voor environment: ' . $environmentKey);
+        auth_throw_mimir_or_config(new RuntimeException('Geen auth-configuratie gevonden voor environment: ' . $environmentKey));
     }
 
     return $auth;
@@ -297,11 +319,12 @@ function auth_fetch_companies_for_environment_via_curl(string $url, array $auth)
 function auth_discover_companies_via_mimir(): array
 {
     auth_ensure_odata_loaded();
-    if (!function_exists('odata_mimir_companies_as_rows')) {
+    if (!function_exists('odata_mimir_companies_as_rows_impl')) {
         throw new RuntimeException('Mímir company-discovery vereist odata.php.');
     }
 
-    $rows = odata_mimir_companies_as_rows(null);
+    // Impl gooit de Mímir-fout door; de aanroeper valt terug op de pre-Mímir BC-route.
+    $rows = odata_mimir_companies_as_rows_impl(null);
     $companiesByEnvironment = [];
     $companyToEnvironment = [];
     $duplicates = [];
@@ -408,11 +431,27 @@ function auth_discover_companies_via_mimir(): array
  */
 function auth_discover_companies_across_active_environments(int $ttlSeconds = AUTH_COMPANIES_ODATA_TTL): array
 {
-    // Mímir: companies + environments uit Mímir API — geen $auth_list/$baseUrl nodig.
-    if (auth_mimir_enabled()) {
-        return auth_discover_companies_via_mimir();
+    // Mímir eerst. Faalt dat, dan de pre-Mímir discovery (auth_list + baseUrl + filecache).
+    if (function_exists('odata_mimir_enabled') && odata_mimir_enabled() && function_exists('odata_mimir_or_direct')) {
+        return odata_mimir_or_direct(
+            static function (): array {
+                return auth_discover_companies_via_mimir();
+            },
+            static function () use ($ttlSeconds): array {
+                return auth_discover_companies_across_active_environments_bc($ttlSeconds);
+            }
+        );
     }
 
+    return auth_discover_companies_across_active_environments_bc($ttlSeconds);
+}
+
+/**
+ * Ontdekt bedrijven over alle actieve environments en bouwt de map.
+ * Dit is de directe BC-route van vóór de Mímir-migratie.
+ */
+function auth_discover_companies_across_active_environments_bc(int $ttlSeconds = AUTH_COMPANIES_ODATA_TTL): array
+{
     $activeEnvironments = auth_get_active_environments();
     if ($activeEnvironments === []) {
         throw new RuntimeException('Geen actieve environments geconfigureerd.');
