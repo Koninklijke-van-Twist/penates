@@ -209,10 +209,10 @@ $secondListCalls = array_slice($calls, $beforeSecondList);
 if (count($secondListCalls) !== 2) {
     fail('company-lijst moet elke auth_list-environment bevragen: ' . json_encode($secondListCalls));
 }
-if (($secondListCalls[0]['url'] ?? '') !== 'https://bc.example:7148/Production/ODataV4/Company' || ($secondListCalls[0]['user'] ?? '') !== 'bcuser') {
+if (($secondListCalls[0]['url'] ?? '') !== 'https://bc.example:7148/Production/ODataV4/Company?$select=Name' || ($secondListCalls[0]['user'] ?? '') !== 'bcuser') {
     fail('primaire environment hield niet de eigen credentials: ' . json_encode($secondListCalls[0] ?? null));
 }
-if (($secondListCalls[1]['url'] ?? '') !== 'https://bc.example:7148/Sandbox%20Two/ODataV4/Company' || ($secondListCalls[1]['user'] ?? '') !== 'sandbox-user') {
+if (($secondListCalls[1]['url'] ?? '') !== 'https://bc.example:7148/Sandbox%20Two/ODataV4/Company?$select=Name' || ($secondListCalls[1]['user'] ?? '') !== 'sandbox-user') {
     fail('tweede environment werd niet apart bevraagd: ' . json_encode($secondListCalls[1] ?? null));
 }
 if (fallback_count() !== $loggedBeforeSecondList + 1) {
@@ -480,7 +480,7 @@ if (($onlyFetch[0]['No'] ?? '') !== 'WO-1' || !is_array($onlyFetchCall) || ($onl
 $beforeOnlyList = count($calls);
 $onlyNames = odata_mimir_list_companies(null);
 $onlyListCall = $calls[$beforeOnlyList] ?? null;
-if ($onlyNames !== $expectedNames || !is_array($onlyListCall) || ($onlyListCall['url'] ?? '') !== 'https://bc.example:7148/Production/ODataV4/Company' || ($onlyListCall['user'] ?? '') !== 'only-auth-user') {
+if ($onlyNames !== $expectedNames || !is_array($onlyListCall) || ($onlyListCall['url'] ?? '') !== 'https://bc.example:7148/Production/ODataV4/Company?$select=Name' || ($onlyListCall['user'] ?? '') !== 'only-auth-user') {
     fail('companylijst zonder auth_list vroeg niet de primaire environment met $auth: ' . json_encode($onlyListCall) . ' namen=' . json_encode($onlyNames));
 }
 
@@ -500,7 +500,7 @@ unset($auth_list);
 $beforeBase = count($calls);
 $baseNames = odata_mimir_list_companies(null);
 $baseCall = $calls[$beforeBase] ?? null;
-if ($baseNames !== $expectedNames || !is_array($baseCall) || ($baseCall['url'] ?? '') !== 'https://bc.example:7148/Production/ODataV4/Company' || ($baseCall['user'] ?? '') !== 'only-auth-user') {
+if ($baseNames !== $expectedNames || !is_array($baseCall) || ($baseCall['url'] ?? '') !== 'https://bc.example:7148/Production/ODataV4/Company?$select=Name' || ($baseCall['user'] ?? '') !== 'only-auth-user') {
     fail('companylijst moet $base gebruiken als baseUrl de Mímir-placeholder is: ' . json_encode($baseCall));
 }
 $baseUrl = 'https://bc.example:7148/';

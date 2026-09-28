@@ -12,11 +12,12 @@ const PENATES_ODATA_TTL = 86400;
 /** Mímir max_age for nightly snapshot builds (4h — cache sharing, nightly still refreshes). */
 const PENATES_NIGHTLY_MAX_AGE = 14400;
 
-const PENATES_BIN_SELECT = 'Location_Code,Code,Description,Empty,KVT_Job_Bin';
+const PENATES_BIN_SELECT = 'Location_Code,Code,Description';
 const PENATES_CONTENT_SELECT = 'Location_Code,Bin_Code,Item_No,Variant_Code,Unit_of_Measure_Code,Quantity_Base,Pick_Quantity_Base,CalcQtyAvailToTakeUOM';
-const PENATES_PROJECT_SELECT = 'No,Description,Status,LVS_Document_Status';
+const PENATES_WAREHOUSE_CONTENT_SELECT = 'Location_Code,Bin_Code,Item_No,Variant_Code,Unit_of_Measure_Code,Quantity_Base';
+const PENATES_PROJECT_SELECT = 'No,Status,LVS_Document_Status';
 const PENATES_WORKORDER_SELECT = 'No,Job_No,Job_Task_No,Task_Description,Status,KVT_Document_Status,KVT_No_Material_Needed,Start_Date';
-const PENATES_LINE_SELECT = 'Job_No,Job_Task_No,Line_No,Type,No,Description,Variant_Code,Quantity,Quantity_Base,Unit_of_Measure_Code,KVT_Qty_Picked,KVT_Completely_Picked,LVS_Cancelled_Original_Line,LVS_Work_Order_No,Location_Code,Bin_Code';
+const PENATES_LINE_SELECT = 'Job_No,Job_Task_No,Line_No,No,Description,Variant_Code,Quantity,Quantity_Base,KVT_Qty_Picked,KVT_Completely_Picked,LVS_Cancelled_Original_Line,LVS_Work_Order_No';
 const PENATES_ITEM_SELECT = 'No,Description,LVS_Description_2,Description_2,Base_Unit_of_Measure,Safety_Stock_Quantity,Inventory,Unit_Cost';
 
 const PENATES_REASON_LABELS = [
@@ -988,7 +989,7 @@ function penates_fetch_bin_contents_for_items(string $company, array $itemNumber
     $rows = [];
     foreach (penates_chunks($itemNumbers) as $chunk) {
         $rows = array_merge($rows, penates_fetch_rows_live($company, 'BinContent', [
-            '$select' => PENATES_CONTENT_SELECT,
+            '$select' => PENATES_WAREHOUSE_CONTENT_SELECT,
             '$filter' => 'Quantity_Base gt 0 and (' . penates_odata_or('Item_No', $chunk) . ')',
         ]));
     }
