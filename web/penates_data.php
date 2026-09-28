@@ -111,7 +111,14 @@ function penates_fetch_rows_direct(string $company, string $entitySet, array $qu
 
     $environment = auth_get_environment_for_company($company);
     $auth = auth_get_auth_for_environment($environment);
-    $url = penates_company_entity_url((string) $baseUrl, $environment, $company, $entitySet, $query);
+    $root = trim((string) $baseUrl);
+    if (($root === '' || stripos($root, 'mimir.invalid') !== false) && function_exists('odata_bc_base_url')) {
+        $resolved = odata_bc_base_url();
+        if (is_string($resolved) && $resolved !== '') {
+            $root = $resolved;
+        }
+    }
+    $url = penates_company_entity_url($root, $environment, $company, $entitySet, $query);
 
     return penates_fetch_url_live($url, $auth);
 }

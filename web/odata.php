@@ -141,15 +141,17 @@ function odata_auth_is_usable($auth): bool
 
 function odata_bc_base_url(): ?string
 {
-    global $baseUrl;
-    if (!isset($baseUrl) || !is_string($baseUrl)) {
-        return null;
+    foreach (['baseUrl', 'base'] as $name) {
+        if (!isset($GLOBALS[$name]) || !is_string($GLOBALS[$name])) {
+            continue;
+        }
+        $value = trim($GLOBALS[$name]);
+        if ($value === '' || stripos($value, 'mimir.invalid') !== false) {
+            continue;
+        }
+        return $value;
     }
-    $base = trim($baseUrl);
-    if ($base === '' || stripos($base, 'mimir.invalid') !== false) {
-        return null;
-    }
-    return $base;
+    return null;
 }
 
 /**
@@ -198,15 +200,29 @@ function odata_bc_environment(): ?string
     return $envs === [] ? null : $envs[0];
 }
 
-function odata_bc_auth_for_fallback(array $passed): ?array
+function odata_bc_usable_auth_or_preserved(array $passed): ?array
 {
     if (odata_auth_is_usable($passed)) {
         return $passed;
     }
-    global $auth, $auth_list;
+    global $auth;
     if (isset($auth) && odata_auth_is_usable($auth)) {
         return $auth;
     }
+    $preserved = $GLOBALS['penates_bc_auth_original'] ?? null;
+    if (odata_auth_is_usable($preserved)) {
+        return $preserved;
+    }
+    return null;
+}
+
+function odata_bc_auth_for_fallback(array $passed): ?array
+{
+    $direct = odata_bc_usable_auth_or_preserved($passed);
+    if ($direct !== null) {
+        return $direct;
+    }
+    global $auth_list;
     if (!isset($auth_list) || !is_array($auth_list)) {
         return null;
     }
@@ -402,6 +418,20 @@ function odata_bc_auth_for_named_environment(string $env): ?array
     return null;
 }
 
+function odata_bc_auth_list_has_usable(): bool
+{
+    global $auth_list;
+    if (!isset($auth_list) || !is_array($auth_list)) {
+        return false;
+    }
+    foreach ($auth_list as $entry) {
+        if (odata_auth_is_usable($entry)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function odata_bc_auth_for_company_env(?string $env, array $passed): ?array
 {
     if ($env !== null) {
@@ -409,11 +439,19 @@ function odata_bc_auth_for_company_env(?string $env, array $passed): ?array
         if ($named !== null) {
             return $named;
         }
-        // Alleen een onbekend bedrijf of de primaire environment mag $auth gebruiken.
-        $primary = odata_bc_environment();
-        if ($primary === null || strcasecmp(trim($env), $primary) !== 0) {
+        $trimmed = trim($env);
+        if ($trimmed === '' || strcasecmp($trimmed, 'mimir') === 0) {
             return null;
         }
+        // Eigen auth_list-entry hierboven. Zonder lijst, of voor de primaire
+        // environment, $auth (of bewaarde credentials). Een andere environment
+        // terwijl de lijst gevuld is, weigert.
+        $primary = odata_bc_environment();
+        $isPrimary = $primary !== null && strcasecmp($trimmed, $primary) === 0;
+        if (!$isPrimary && odata_bc_auth_list_has_usable()) {
+            return null;
+        }
+        return odata_bc_usable_auth_or_preserved($passed);
     }
     return odata_bc_auth_for_fallback($passed);
 }
@@ -487,6 +525,10 @@ function odata_mimir_log_fallback(Throwable $exception): void
                 $redactions[] = $entry['pass'];
             }
         }
+    }
+    $preserved = $GLOBALS['penates_bc_auth_original'] ?? null;
+    if (is_array($preserved) && isset($preserved['pass']) && is_string($preserved['pass']) && $preserved['pass'] !== '') {
+        $redactions[] = $preserved['pass'];
     }
     foreach ($redactions as $secret) {
         $message = str_replace($secret, '[redacted]', $message);
