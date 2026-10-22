@@ -17,7 +17,7 @@ const PENATES_CONTENT_SELECT = 'Location_Code,Bin_Code,Item_No,Variant_Code,Unit
 const PENATES_WAREHOUSE_CONTENT_SELECT = 'Location_Code,Bin_Code,Item_No,Variant_Code,Unit_of_Measure_Code,Quantity_Base';
 const PENATES_PROJECT_SELECT = 'No,Status,LVS_Document_Status';
 const PENATES_WORKORDER_SELECT = 'No,Job_No,Job_Task_No,Task_Description,Status,KVT_Document_Status,KVT_No_Material_Needed,Start_Date';
-const PENATES_LINE_SELECT = 'Job_No,Job_Task_No,Line_No,No,Description,Variant_Code,Quantity,Quantity_Base,KVT_Qty_Picked,KVT_Completely_Picked,LVS_Cancelled_Original_Line,LVS_Work_Order_No';
+const PENATES_LINE_SELECT = 'Type,Job_No,Job_Task_No,Line_No,No,Description,Variant_Code,Quantity,Quantity_Base,KVT_Qty_Picked,KVT_Completely_Picked,LVS_Cancelled_Original_Line,LVS_Work_Order_No';
 const PENATES_ITEM_SELECT = 'No,Description,LVS_Description_2,Description_2,Base_Unit_of_Measure,Safety_Stock_Quantity,Inventory,Unit_Cost';
 
 const PENATES_REASON_LABELS = [
@@ -216,6 +216,53 @@ function penates_fetch_projects_for_bins(string $company, array $binCodes, int $
     return penates_unique_rows($rows, static fn(array $row): string => (string) ($row['No'] ?? ''));
 }
 
+/** Normaliseert een BC-optiewaarde: lowercase, underscores/spaties samengevoegd. */
+function penates_normalize_option_value(string $value): string
+{
+    $value = strtolower(trim($value));
+    $value = str_replace('_', ' ', $value);
+    return trim((string) preg_replace('/\s+/', ' ', $value));
+}
+
+/** Optiewaarde zonder nummerprefix, bv. '02 in progress' -> 'in progress'. */
+function penates_option_without_prefix(string $value): string
+{
+    return (string) preg_replace('/^\d+\s+/', '', penates_normalize_option_value($value));
+}
+
+/** True als een optiewaarde (NL/EN/DE, met of zonder nummerprefix) een van de aliassen is. */
+function penates_option_matches(string $value, array $candidates): bool
+{
+    $full = penates_normalize_option_value($value);
+    if ($full === '') {
+        return false;
+    }
+    $bare = penates_option_without_prefix($value);
+    foreach ($candidates as $candidate) {
+        $c = penates_normalize_option_value((string) $candidate);
+        if ($c === '') {
+            continue;
+        }
+        if ($c === $full || $c === $bare || penates_option_without_prefix((string) $candidate) === $bare) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** Werkorderregel-Type "Artikel" (NL/DE) of "Item" (EN); ook optienummer 1. */
+function penates_row_is_item_type(array $row): bool
+{
+    if (!array_key_exists('Type', $row)) {
+        return true;
+    }
+    $type = trim((string) $row['Type']);
+    if ($type === '') {
+        return true;
+    }
+    return $type === '1' || penates_option_matches($type, ['Artikel', 'Item']);
+}
+
 function penates_fetch_lines_for_context(string $company, array $binCodes, array $workorders, int $ttl = PENATES_ODATA_TTL): array
 {
     $jobNumbers = $binCodes;
@@ -228,9 +275,12 @@ function penates_fetch_lines_for_context(string $company, array $binCodes, array
     foreach (penates_chunks($jobNumbers) as $chunk) {
         $rows = array_merge($rows, penates_fetch_rows_live($company, 'WerkordersLines', [
             '$select' => PENATES_LINE_SELECT,
-            '$filter' => "Type eq 'Artikel' and (" . penates_odata_or('Job_No', $chunk) . ')',
+            // Geen Type-filter in OData: de optietekst hangt af van de taal van de BC-gebruiker
+            // ('Artikel' in NL/DE, 'Item' in EN) en een ongeldige optie laat de query falen.
+            '$filter' => penates_odata_or('Job_No', $chunk),
         ], $ttl));
     }
+    $rows = array_values(array_filter($rows, static fn($row): bool => is_array($row) && penates_row_is_item_type($row)));
 
     return penates_unique_rows($rows, static function (array $row): string {
         return implode('|', [

@@ -268,4 +268,16 @@ test_assert(penates_location_hue('A') === 65, 'Hue-hash voor A moet 65 zijn');
 $hue = penates_location_hue('5-14-C-1');
 test_assert($hue >= 0 && $hue < 360, 'Hue moet in 0–359 liggen');
 
+// Taalonafhankelijke optiewaarden (BC-gebruiker NL, EN of DE).
+foreach (['Artikel', 'Item', 'ITEM', 'item', '1', ''] as $type) {
+    test_assert(penates_row_is_item_type(['Type' => $type]), 'Type ' . $type . ' moet als artikelregel tellen');
+}
+foreach (['Resource', 'Middel', 'G/L Account', 'Grootboekrekening', 'Text', 'Tekst'] as $type) {
+    test_assert(!penates_row_is_item_type(['Type' => $type]), 'Type ' . $type . ' is geen artikelregel');
+}
+test_assert(penates_row_is_item_type(['No' => 'X']), 'Regel zonder Type blijft staan');
+test_assert(penates_option_matches('02 IN PROGRESS', ['In Progress']), 'Nummerprefix hoort genegeerd te worden');
+test_assert(penates_option_matches('in_progress', ['IN PROGRESS']), 'Underscores horen als spatie te tellen');
+test_assert(!penates_option_matches('', ['Item']), 'Lege waarde matcht niet');
+
 echo "OK penates_data_test\n";
