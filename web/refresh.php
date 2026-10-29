@@ -31,6 +31,8 @@ $sessionToken = (string) ($_SESSION['penates_csrf_token'] ?? '');
 if ($sessionToken === '' || $token === '' || !hash_equals($sessionToken, $token)) {
     penates_refresh_response(403, ['ok' => false, 'error' => 'Ongeldige sessie. Vernieuw de pagina.']);
 }
+// Alleen gelezen; sluiten vóór de trage BC-recheck.
+session_write_close();
 
 $rowId = trim((string) ($_POST['row_id'] ?? ''));
 if (!preg_match('/^[a-f0-9]{64}$/', $rowId)) {

@@ -13,6 +13,9 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 if (empty($_SESSION['penates_csrf_token'])) {
     $_SESSION['penates_csrf_token'] = bin2hex(random_bytes(24));
 }
+// Token staat in de sessie; direct sluiten zodat de rest van de pagina het
+// sessielock niet vasthoudt.
+session_write_close();
 
 function penates_h(mixed $value): string
 {
