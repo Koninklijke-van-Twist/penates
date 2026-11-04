@@ -143,23 +143,69 @@ function penates_chunks(array $values): array
     return array_chunk(array_values(array_unique(array_filter(array_map('strval', $values)))), PENATES_ODATA_BATCH_SIZE);
 }
 
+/** Bedrijven waarvan de Bins-webservice geen KVT_Job_Bin-veld heeft (geen KVT-magazijnextensie). */
+const PENATES_COMPANIES_WITHOUT_JOB_BIN = ['KVT Germany GmbH'];
+
+/** @var array<string, bool> Runtime-ontdekte bedrijven zonder KVT_Job_Bin. */
+$GLOBALS['penates_job_bin_missing'] = $GLOBALS['penates_job_bin_missing'] ?? [];
+
+function penates_company_has_job_bin(string $company): bool
+{
+    return !in_array($company, PENATES_COMPANIES_WITHOUT_JOB_BIN, true)
+        && empty($GLOBALS['penates_job_bin_missing'][$company]);
+}
+
+function penates_is_missing_job_bin_error(Throwable $error): bool
+{
+    return str_contains($error->getMessage(), "property named 'KVT_Job_Bin'");
+}
+
+/** Verwijdert de KVT_Job_Bin-voorwaarde uit een $filter. */
+function penates_strip_job_bin_filter(string $filter): string
+{
+    $filter = preg_replace('/\s+and\s+KVT_Job_Bin eq (true|false)\b/', '', $filter) ?? $filter;
+    $filter = preg_replace('/^\s*KVT_Job_Bin eq (true|false)\s*(and\s+)?/', '', $filter) ?? $filter;
+    return trim($filter);
+}
+
+/**
+ * Haalt Bins op met een $filter dat 'KVT_Job_Bin eq true|false' bevat. Ontbreekt
+ * het veld bij dit bedrijf (bekend of via de BC-fout), dan wordt opnieuw gevraagd
+ * zonder het veld en gelden alle bakken als niet-projectbak: een filter op
+ * 'eq true' levert dan niets op, 'eq false' de query zonder Job-voorwaarde.
+ */
+function penates_fetch_bins_with_job_filter(string $company, array $query, int $ttl = PENATES_ODATA_TTL): array
+{
+    $filter = (string) ($query['$filter'] ?? '');
+    if (penates_company_has_job_bin($company)) {
+        try {
+            return penates_fetch_rows_live($company, 'Bins', $query, $ttl);
+        } catch (Throwable $error) {
+            if (!penates_is_missing_job_bin_error($error)) {
+                throw $error;
+            }
+            $GLOBALS['penates_job_bin_missing'][$company] = true;
+        }
+    }
+    if (preg_match('/KVT_Job_Bin eq true\b/', $filter)) {
+        return [];
+    }
+    $stripped = penates_strip_job_bin_filter($filter);
+    if ($stripped === '') {
+        unset($query['$filter']);
+    } else {
+        $query['$filter'] = $stripped;
+    }
+    return penates_fetch_rows_live($company, 'Bins', $query, $ttl);
+}
+
 function penates_fetch_project_bins(string $company, int $ttl = PENATES_ODATA_TTL): array
 {
-    try {
-        return penates_fetch_rows_live($company, 'Bins', [
-            '$select' => PENATES_BIN_SELECT,
-            '$filter' => 'KVT_Job_Bin eq true and Empty eq false',
-            '$orderby' => 'Location_Code asc,Code asc',
-        ], $ttl);
-    } catch (Throwable $error) {
-        // Niet ieder actief environment heeft de KVT-magazijnextensie.
-        // Zonder deze marker kunnen bins niet betrouwbaar als projectbin
-        // worden aangemerkt, dus levert dat bedrijf bewust geen regels.
-        if (str_contains($error->getMessage(), "property named 'KVT_Job_Bin'")) {
-            return [];
-        }
-        throw $error;
-    }
+    return penates_fetch_bins_with_job_filter($company, [
+        '$select' => PENATES_BIN_SELECT,
+        '$filter' => 'KVT_Job_Bin eq true and Empty eq false',
+        '$orderby' => 'Location_Code asc,Code asc',
+    ], $ttl);
 }
 
 function penates_fetch_bin_contents(string $company, array $bins, int $ttl = PENATES_ODATA_TTL): array
@@ -944,7 +990,7 @@ function penates_recheck_row(array $existingRow): array
         return ['keep' => false, 'row' => null, 'message' => 'Artikel ligt niet meer in deze bin.'];
     }
 
-    $bins = penates_fetch_rows_live($company, 'Bins', [
+    $bins = penates_fetch_bins_with_job_filter($company, [
         '$select' => PENATES_BIN_SELECT,
         '$filter' => penates_odata_equals('Location_Code', $location)
             . ' and ' . penates_odata_equals('Code', $binCode)
@@ -1008,7 +1054,7 @@ function penates_fetch_bins_for_contents(string $company, array $contents): arra
     $bins = [];
     foreach ($codesByLocation as $location => $codes) {
         foreach (penates_chunks($codes) as $chunk) {
-            $bins = array_merge($bins, penates_fetch_rows_live($company, 'Bins', [
+            $bins = array_merge($bins, penates_fetch_bins_with_job_filter($company, [
                 '$select' => PENATES_BIN_SELECT,
                 '$filter' => penates_odata_equals('Location_Code', $location)
                     . ' and KVT_Job_Bin eq false and (' . penates_odata_or('Code', $chunk) . ')',
